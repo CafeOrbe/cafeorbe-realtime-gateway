@@ -1,0 +1,11 @@
+spring:
+  rabbitmq:
+    listener:
+      simple:
+        auto-startup: false
+
+cafeorbe:
+  cors:
+    origins: "*"
+  realtime:
+    modo: memoria

@@ -1,0 +1,47 @@
+server:
+  port: 8085
+
+spring:
+  application:
+    name: realtime-gateway
+  threads:
+    virtual:
+      enabled: true
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+  rabbitmq:
+    host: ${RABBIT_HOST:localhost}
+    port: ${RABBIT_PORT:5672}
+    username: ${RABBIT_USER:cafeorbe}
+    password: ${RABBIT_PASSWORD:cafeorbe}
+    listener:
+      simple:
+        # Un solo consumidor por instancia conserva el orden de los eventos de una sala
+        concurrency: 1
+        max-concurrency: 1
+        default-requeue-rejected: false
+
+cafeorbe:
+  jwt:
+    secret: ${JWT_SECRET:cafeorbe-dev-jwt-secret-cambiar-en-prod-0123456789}
+  auction:
+    # Las pujas que llegan por WebSocket se reenvían a auction, que las valida y decide
+    url: ${AUCTION_URL:http://localhost:8082}
+    connect-timeout-ms: 1000
+    read-timeout-ms: 5000
+  cors:
+    origins: ${CORS_ORIGINS:http://localhost:5173}
+  realtime:
+    # redis: backplane y presencia en Redis (varias instancias). memoria: solo pruebas / una instancia.
+    modo: redis
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  health:
+    redis:
+      enabled: false
