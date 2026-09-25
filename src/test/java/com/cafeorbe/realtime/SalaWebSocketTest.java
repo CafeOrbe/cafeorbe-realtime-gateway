@@ -47,6 +47,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
@@ -166,6 +167,16 @@ class SalaWebSocketTest {
     void handshakeSinToken() {
         assertThatThrownBy(() -> conectar(SUBASTA, "")).isInstanceOf(ExecutionException.class);
         assertThatThrownBy(() -> conectar(SUBASTA, "no-es-un-jwt")).isInstanceOf(ExecutionException.class);
+    }
+
+    @Test
+    @DisplayName("HU-05 · Una subasta que no existe no abre sala ni registra presencia")
+    void subastaInexistente() throws Exception {
+        UUID inexistente = UUID.randomUUID();
+        when(auction.noExiste(eq(inexistente), any(Identidad.class))).thenReturn(true);
+        assertThatThrownBy(() -> comoAna(inexistente)).isInstanceOf(ExecutionException.class);
+        // Una subasta existente (o auction sin responder) sí deja entrar.
+        assertThat(comoAna(SUBASTA).siguiente("CONECTADOS").get("datos").get("conectados").asInt()).isEqualTo(1);
     }
 
     @Test

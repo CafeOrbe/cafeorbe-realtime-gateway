@@ -65,6 +65,26 @@ public class AuctionClient {
         }
     }
 
+    /**
+     * HU-05: {@code true} solo si auction confirma que la subasta no existe (HTTP 404). Si auction no responde
+     * se deja entrar: la sala carga el detalle por REST y el WebSocket se resincroniza al reconectar.
+     */
+    public boolean noExiste(UUID subastaId, Identidad usuario) {
+        try {
+            cliente.get().uri("/api/subastas/{id}", subastaId)
+                    .header(Cabeceras.USUARIO_ID, usuario.usuarioId().toString())
+                    .header(Cabeceras.USUARIO_NOMBRE, URLEncoder.encode(usuario.nombre(), StandardCharsets.UTF_8))
+                    .header(Cabeceras.USUARIO_ROL, usuario.rol().name())
+                    .retrieve()
+                    .toBodilessEntity();
+            return false;
+        } catch (RestClientResponseException e) {
+            return e.getStatusCode().value() == HttpStatus.NOT_FOUND.value();
+        } catch (RestClientException e) {
+            return false;
+        }
+    }
+
     private String mensajeDe(RestClientResponseException e) {
         try {
             String mensaje = json.readTree(e.getResponseBodyAsString()).path("mensaje").asText("");

@@ -1,5 +1,6 @@
 package com.cafeorbe.realtime.ws;
 
+import com.cafeorbe.realtime.client.AuctionClient;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.server.ServerHttpRequest;
 import org.springframework.http.server.ServerHttpResponse;
@@ -22,9 +23,11 @@ public class HandshakeConToken implements HandshakeInterceptor {
     static final String ATRIBUTO_SUBASTA = "subastaId";
 
     private final ValidadorDeToken validador;
+    private final AuctionClient auction;
 
-    public HandshakeConToken(ValidadorDeToken validador) {
+    public HandshakeConToken(ValidadorDeToken validador, AuctionClient auction) {
         this.validador = validador;
+        this.auction = auction;
     }
 
     @Override
@@ -43,6 +46,11 @@ public class HandshakeConToken implements HandshakeInterceptor {
         var identidad = validador.validar(token);
         if (identidad.isEmpty()) {
             respuesta.setStatusCode(HttpStatus.UNAUTHORIZED);
+            return false;
+        }
+        // Sin esto cualquier UUID abría una sala y dejaba presencia en Redis para subastas inexistentes.
+        if (auction.noExiste(subastaId, identidad.get())) {
+            respuesta.setStatusCode(HttpStatus.NOT_FOUND);
             return false;
         }
         atributos.put(ATRIBUTO_IDENTIDAD, identidad.get());
