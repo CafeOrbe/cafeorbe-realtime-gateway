@@ -288,7 +288,7 @@ El pipeline (`.github/workflows/ci.yml`) despliega en QA con cada cambio en `mai
 | El token solo se valida al conectar | Una conexión abierta sigue viva después de que el token vence | Cerrar la conexión al vencer el token |
 | Varias instancias compiten por la misma cola | El orden entre eventos de una misma sala no está garantizado entre instancias | Encaminar por sala (consistent hashing) si el volumen lo exige |
 | Redis pub/sub no persiste | Un mensaje puede perderse durante un corte de Redis | Mitigado con la resincronización del cliente; Redis Streams si se necesita garantía |
-| En la nube, `AUCTION_URL` usa `http` hacia un nombre interno | Por verificar: el ambiente redirige a `https` y el cliente no sigue la redirección, así que una puja enviada por WebSocket se perdería sin aviso | Probar una puja en QA; ver `cafeorbe-infra`, riesgo 5 |
+| En la nube, `AUCTION_URL` apuntaba a un nombre `.internal.` que no existe en el ambiente | Las pujas enviadas por WebSocket no llegaban a auction | Corregido y verificado en QA: `https` con el nombre real de la aplicación |
 | En la nube, Redis se usa sin TLS (puerto 6379) | La contraseña viaja sin cifrar | Puerto TLS 6380 |
 | Sin límite de mensajes por conexión | Un cliente puede enviar `PUJAR` en ráfaga | Límite de frecuencia por usuario |
 
