@@ -116,7 +116,7 @@ jobs:
                 "REDIS_HOST=cafeorbe-redis.redis.cache.windows.net" \
                 "REDIS_PORT=6379" \
                 "REDIS_PASSWORD=$REDIS_PASSWORD" \
-                "AUCTION_URL=http://auction-service.internal.blackbay-48700ead.eastus2.azurecontainerapps.io" \
+                "AUCTION_URL=https://auction-service.blackbay-48700ead.eastus2.azurecontainerapps.io" \
                 "CORS_ORIGINS=https://cafeorbe-web.vercel.app"
 
           else
@@ -143,7 +143,7 @@ jobs:
                 "REDIS_HOST=cafeorbe-redis.redis.cache.windows.net" \
                 "REDIS_PORT=6379" \
                 "REDIS_PASSWORD=$REDIS_PASSWORD" \
-                "AUCTION_URL=http://auction-service.internal.blackbay-48700ead.eastus2.azurecontainerapps.io" \
+                "AUCTION_URL=https://auction-service.blackbay-48700ead.eastus2.azurecontainerapps.io" \
                 "CORS_ORIGINS=https://cafeorbe-web.vercel.app"
 
           fi
@@ -214,7 +214,7 @@ jobs:
                 "REDIS_HOST=cafeorbe-redis.redis.cache.windows.net" \
                 "REDIS_PORT=6379" \
                 "REDIS_PASSWORD=$REDIS_PASSWORD" \
-                "AUCTION_URL=http://auction-service.internal.thankfulmoss-4f48ec41.eastus2.azurecontainerapps.io" \
+                "AUCTION_URL=https://auction-service-prod.thankfulmoss-4f48ec41.eastus2.azurecontainerapps.io" \
                 "CORS_ORIGINS=https://cafeorbe-web.vercel.app"
 
           else
@@ -241,7 +241,7 @@ jobs:
                 "REDIS_HOST=cafeorbe-redis.redis.cache.windows.net" \
                 "REDIS_PORT=6379" \
                 "REDIS_PASSWORD=$REDIS_PASSWORD" \
-                "AUCTION_URL=http://auction-service.internal.thankfulmoss-4f48ec41.eastus2.azurecontainerapps.io" \
+                "AUCTION_URL=https://auction-service-prod.thankfulmoss-4f48ec41.eastus2.azurecontainerapps.io" \
                 "CORS_ORIGINS=https://cafeorbe-web.vercel.app"
 
           fi
