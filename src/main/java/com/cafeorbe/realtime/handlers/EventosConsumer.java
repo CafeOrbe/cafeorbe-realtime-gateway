@@ -38,8 +38,20 @@ public class EventosConsumer {
 
     @Bean
     Binding vinculos(Queue colaDeEventos, TopicExchange eventosExchange) {
-        // Sprint 2 agregará: subasta.cerrada, tiempo.extendido, orbes.cobrados
+        // subasta.iniciada y subasta.cerrada
         return BindingBuilder.bind(colaDeEventos).to(eventosExchange).with("subasta.*");
+    }
+
+    /** HU-18: tiempo.extendido */
+    @Bean
+    Binding vinculoTiempo(Queue colaDeEventos, TopicExchange eventosExchange) {
+        return BindingBuilder.bind(colaDeEventos).to(eventosExchange).with("tiempo.*");
+    }
+
+    /** HU-20: orbes.cobrados */
+    @Bean
+    Binding vinculoOrbes(Queue colaDeEventos, TopicExchange eventosExchange) {
+        return BindingBuilder.bind(colaDeEventos).to(eventosExchange).with("orbes.*");
     }
 
     @Bean

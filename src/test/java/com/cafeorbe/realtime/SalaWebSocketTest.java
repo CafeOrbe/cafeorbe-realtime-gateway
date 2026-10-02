@@ -3,9 +3,12 @@ package com.cafeorbe.realtime;
 import com.cafeorbe.contracts.EventoEnvelope;
 import com.cafeorbe.contracts.Eventos;
 import com.cafeorbe.contracts.Rol;
+import com.cafeorbe.contracts.eventos.OrbesCobrados;
 import com.cafeorbe.contracts.eventos.PujaAceptada;
 import com.cafeorbe.contracts.eventos.PujaRechazada;
+import com.cafeorbe.contracts.eventos.SubastaCerrada;
 import com.cafeorbe.contracts.eventos.SubastaIniciada;
+import com.cafeorbe.contracts.eventos.TiempoExtendido;
 import com.cafeorbe.contracts.eventos.TransmisionDetenida;
 import com.cafeorbe.contracts.eventos.TransmisionIniciada;
 import com.cafeorbe.realtime.client.AuctionClient;
@@ -310,5 +313,65 @@ class SalaWebSocketTest {
         luis.enviar("{\"tipo\":\"PING\"}");
         luis.siguiente("PONG");
         assertThat(Duration.ofSeconds(1)).isPositive();
+    }
+
+    // ── Sprint 2: extensión, cierre y cobro ───────────────────────────────
+
+    @Test
+    @DisplayName("HU-18 · TiempoExtendido llega a toda la sala con la nueva hora de fin")
+    void tiempoExtendido() throws Exception {
+        Cliente ana = comoAna(SUBASTA);
+        Cliente bruno = comoBruno(SUBASTA);
+        Instant nuevoFin = Instant.parse("2026-10-05T15:10:30Z");
+
+        evento(Eventos.TIEMPO_EXTENDIDO, new TiempoExtendido(SUBASTA, 30, nuevoFin, 1, 3));
+
+        for (Cliente c : List.of(ana, bruno)) {
+            JsonNode m = c.siguiente("TIEMPO_EXTENDIDO");
+            assertThat(m.get("datos").get("segundosExtendidos").asInt()).isEqualTo(30);
+            assertThat(Instant.parse(m.get("datos").get("horaFin").asText())).isEqualTo(nuevoFin);
+        }
+    }
+
+    @Test
+    @DisplayName("HU-21 · Anuncio con ganador: todos los conectados reciben el nombre del ganador y el monto final")
+    void anuncioConGanador() throws Exception {
+        Cliente ana = comoAna(SUBASTA);
+        Cliente bruno = comoBruno(SUBASTA);
+        Cliente enOtraSala = comoBruno(OTRA_SUBASTA);
+
+        evento(Eventos.SUBASTA_CERRADA, new SubastaCerrada(SUBASTA, "Lote", "FINALIZADA", ANA, "Ana", 300L, 5, Instant.now()));
+
+        for (Cliente c : List.of(ana, bruno)) {
+            JsonNode m = c.siguiente("SUBASTA_CERRADA");
+            assertThat(m.get("datos").get("estado").asText()).isEqualTo("FINALIZADA");
+            assertThat(m.get("datos").get("ganadorNombre").asText()).isEqualTo("Ana");
+            assertThat(m.get("datos").get("montoFinal").asLong()).isEqualTo(300);
+        }
+        enOtraSala.noDebeRecibir("SUBASTA_CERRADA");
+    }
+
+    @Test
+    @DisplayName("HU-21 · Anuncio de subasta desierta: el evento llega a la sala sin ganador")
+    void anuncioDesierta() throws Exception {
+        Cliente ana = comoAna(SUBASTA);
+
+        evento(Eventos.SUBASTA_CERRADA, new SubastaCerrada(SUBASTA, "Lote", "DESIERTA", null, null, null, 0, Instant.now()));
+
+        JsonNode m = ana.siguiente("SUBASTA_CERRADA");
+        assertThat(m.get("datos").get("estado").asText()).isEqualTo("DESIERTA");
+        assertThat(m.get("datos").get("ganadorId").isNull()).isTrue();
+    }
+
+    @Test
+    @DisplayName("HU-20 · OrbesCobrados llega solo al comprador al que se le cobró")
+    void orbesCobrados() throws Exception {
+        Cliente ana = comoAna(SUBASTA);
+        Cliente bruno = comoBruno(SUBASTA);
+
+        evento(Eventos.ORBES_COBRADOS, new OrbesCobrados(SUBASTA, ANA, 300, 700));
+
+        assertThat(ana.siguiente("ORBES_COBRADOS").get("datos").get("saldo").asLong()).isEqualTo(700);
+        bruno.noDebeRecibir("ORBES_COBRADOS");
     }
 }
