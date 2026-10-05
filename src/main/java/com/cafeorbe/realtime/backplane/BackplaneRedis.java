@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.data.redis.connection.MessageListener;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.listener.ChannelTopic;
@@ -49,13 +50,31 @@ public class BackplaneRedis implements Backplane {
     RedisMessageListenerContainer contenedorRedis(RedisConnectionFactory conexiones, Salas salas) {
         var contenedor = new RedisMessageListenerContainer();
         contenedor.setConnectionFactory(conexiones);
-        contenedor.addMessageListener((mensaje, patron) -> {
+        contenedor.addMessageListener(receptor(salas), new ChannelTopic(CANAL));
+        return contenedor;
+    }
+
+    /**
+     * Extraído del @Bean solo para poder probar el mensaje ilegible, que se traga la IOException y solo la
+     * registra. Inlinearlo de vuelta no cambia el comportamiento, pero deja ese camino sin verificar.
+     */
+    MessageListener receptor(Salas salas) {
+        return (mensaje, patron) -> {
+            String cuerpo = new String(mensaje.getBody(), StandardCharsets.UTF_8);
+            Sobre sobre;
             try {
-                salas.entregar(json.readValue(new String(mensaje.getBody(), StandardCharsets.UTF_8), Sobre.class));
+                sobre = json.readValue(cuerpo, Sobre.class);
             } catch (IOException e) {
                 log.error("Mensaje ilegible en el backplane", e);
+                return;
             }
-        }, new ChannelTopic(CANAL));
-        return contenedor;
+            // Sin esta guarda, un sobre sin subastaId hace que Salas.entregar haga get(null) sobre su
+            // ConcurrentHashMap y reviente con NullPointerException, que el catch de arriba no cubre.
+            if (sobre.subastaId() == null || sobre.tipo() == null) {
+                log.warn("Se descarta un sobre del backplane sin subastaId o tipo ({} bytes)", cuerpo.length());
+                return;
+            }
+            salas.entregar(sobre);
+        };
     }
 }

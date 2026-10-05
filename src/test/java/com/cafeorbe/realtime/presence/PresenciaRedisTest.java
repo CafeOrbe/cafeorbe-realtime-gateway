@@ -113,4 +113,32 @@ class PresenciaRedisTest {
 
         assertThat(instancia("b").registrar(SALA, "s1", BRUNO)).isEqualTo(1);
     }
+
+    @Test
+    @DisplayName("Ciclo de vida: nace corriendo, stop() la marca parada y start() la vuelve a levantar")
+    void cicloDeVida() {
+        PresenciaRedis presencia = new PresenciaRedis(redis);
+
+        assertThat(presencia.isRunning()).isTrue();
+        assertThat(presencia.getPhase()).isEqualTo(1);
+
+        presencia.stop();
+        assertThat(presencia.isRunning()).isFalse();
+
+        presencia.start();
+        assertThat(presencia.isRunning()).isTrue();
+    }
+
+    @Test
+    @DisplayName("Tras un stop() seguido de start(), el latido vuelve a publicar la instancia")
+    void elLatidoVuelveTrasElReinicio() {
+        PresenciaRedis presencia = instancia("a");
+        presencia.stop();
+        assertThat(claves).doesNotContain("presencia:instancia:a");
+
+        presencia.start();
+        presencia.latir();
+
+        assertThat(claves).contains("presencia:instancia:a");
+    }
 }
