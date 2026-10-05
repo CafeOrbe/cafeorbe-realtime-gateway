@@ -18,6 +18,10 @@
     <description>WebSocket por sala: difunde puja, líder, precio y transmisión; presencia de conectados (HU-05, HU-13, HU-15)</description>
 
     <properties>
+        <sonar.projectKey>cafeorbe-realtime-gateway</sonar.projectKey>
+        <sonar.organization>cafeorbe</sonar.organization>
+        <sonar.host.url>https://sonarcloud.io</sonar.host.url>
+        <sonar.coverage.jacoco.xmlReportPaths>${project.build.directory}/site/jacoco/jacoco.xml</sonar.coverage.jacoco.xmlReportPaths>
         <java.version>21</java.version>
         <jjwt.version>0.13.0</jjwt.version>
         <jacoco.version>0.8.13</jacoco.version>
