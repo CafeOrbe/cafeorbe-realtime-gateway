@@ -45,6 +45,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -106,8 +107,20 @@ class SalaWebSocketTest {
     }
 
     private Cliente conectar(UUID subasta, String token) throws Exception {
+        return abrir("ws://localhost:" + puerto + "/ws/salas/" + subasta + "?token=" + token);
+    }
+
+    private Cliente conectarSinToken(UUID subasta) throws Exception {
+        return abrir("ws://localhost:" + puerto + "/ws/salas/" + subasta);
+    }
+
+    private Cliente conectarConSegmento(String segmento, String token) throws Exception {
+        return abrir("ws://localhost:" + puerto + "/ws/salas/" + segmento + "?token=" + token);
+    }
+
+    private Cliente abrir(String destino) throws Exception {
         Cliente cliente = new Cliente();
-        var uri = URI.create("ws://localhost:" + puerto + "/ws/salas/" + subasta + "?token=" + token);
+        var uri = URI.create(destino);
         cliente.ws = HttpClient.newHttpClient().newWebSocketBuilder().buildAsync(uri, new WebSocket.Listener() {
             private final StringBuilder parcial = new StringBuilder();
 
@@ -310,5 +323,58 @@ class SalaWebSocketTest {
         luis.enviar("{\"tipo\":\"PING\"}");
         luis.siguiente("PONG");
         assertThat(Duration.ofSeconds(1)).isPositive();
+    }
+
+    @Test
+    @DisplayName("Un tipo de mensaje desconocido responde ERROR y la sala sigue viva")
+    void tipoDeMensajeDesconocido() throws Exception {
+        Cliente ana = comoAna(SUBASTA);
+        ana.siguiente("CONECTADOS");
+
+        ana.enviar("{\"tipo\":\"COBRAR\",\"monto\":9999}");
+
+        assertThat(ana.siguiente("ERROR").get("datos").get("mensaje").asText())
+                .isEqualTo("Mensaje no reconocido");
+        ana.enviar("{\"tipo\":\"PING\"}");
+        ana.siguiente("PONG");
+        verify(auction, never()).pujar(any(UUID.class), any(Identidad.class), any(Long.class));
+    }
+
+    @Test
+    @DisplayName("Una puja con un monto que no es número se rechaza sin llegar a auction")
+    void montoNoNumerico() throws Exception {
+        Cliente ana = comoAna(SUBASTA);
+        ana.siguiente("CONECTADOS");
+
+        ana.enviar("{\"tipo\":\"PUJAR\",\"monto\":\"mucho\"}");
+
+        assertThat(ana.siguiente("ERROR").get("datos").get("mensaje").asText())
+                .isEqualTo("El monto de la puja no es válido");
+        verify(auction, never()).pujar(any(UUID.class), any(Identidad.class), any(Long.class));
+    }
+
+    @Test
+    @DisplayName("Una puja sin monto se rechaza: la validación de entrada es la misma")
+    void pujaSinMonto() throws Exception {
+        Cliente ana = comoAna(SUBASTA);
+        ana.siguiente("CONECTADOS");
+
+        ana.enviar("{\"tipo\":\"PUJAR\"}");
+
+        assertThat(ana.siguiente("ERROR").get("datos").get("mensaje").asText())
+                .isEqualTo("El monto de la puja no es válido");
+    }
+
+    @Test
+    @DisplayName("Una ruta de sala que no es UUID se rechaza en el handshake")
+    void rutaNoEsUuid() {
+        assertThatThrownBy(() -> conectarConSegmento("no-es-uuid", token(ANA, "Ana", Rol.COMPRADOR)))
+                .isInstanceOf(ExecutionException.class);
+    }
+
+    @Test
+    @DisplayName("Una conexión sin el parámetro token se rechaza")
+    void sinParametroToken() {
+        assertThatThrownBy(() -> conectarSinToken(SUBASTA)).isInstanceOf(ExecutionException.class);
     }
 }
