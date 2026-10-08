@@ -48,7 +48,7 @@ public class EventosConsumer {
         return BindingBuilder.bind(colaDeEventos).to(eventosExchange).with("tiempo.*");
     }
 
-    /** HU-20: orbes.cobrados */
+    /** HU-20: orbes.cobrados. HU-24: orbes.abonados */
     @Bean
     Binding vinculoOrbes(Queue colaDeEventos, TopicExchange eventosExchange) {
         return BindingBuilder.bind(colaDeEventos).to(eventosExchange).with("orbes.*");

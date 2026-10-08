@@ -3,6 +3,7 @@ package com.cafeorbe.realtime;
 import com.cafeorbe.contracts.EventoEnvelope;
 import com.cafeorbe.contracts.Eventos;
 import com.cafeorbe.contracts.Rol;
+import com.cafeorbe.contracts.eventos.OrbesAbonados;
 import com.cafeorbe.contracts.eventos.OrbesCobrados;
 import com.cafeorbe.contracts.eventos.PujaAceptada;
 import com.cafeorbe.contracts.eventos.PujaRechazada;
@@ -386,6 +387,20 @@ class SalaWebSocketTest {
 
         assertThat(ana.siguiente("ORBES_COBRADOS").get("datos").get("saldo").asLong()).isEqualTo(700);
         bruno.noDebeRecibir("ORBES_COBRADOS");
+    }
+
+    @Test
+    @DisplayName("HU-24 · OrbesAbonados llega solo al Subastador que recibió los Orbes de la venta")
+    void orbesAbonados() throws Exception {
+        Cliente luis = conectar(SUBASTA, token(LUIS, "Luis", Rol.SUBASTADOR));
+        Cliente ana = comoAna(SUBASTA);
+
+        evento(Eventos.ORBES_ABONADOS, new OrbesAbonados(SUBASTA, LUIS, 300, 300));
+
+        var datos = luis.siguiente("ORBES_ABONADOS").get("datos");
+        assertThat(datos.get("monto").asLong()).isEqualTo(300);
+        assertThat(datos.get("saldo").asLong()).isEqualTo(300);
+        ana.noDebeRecibir("ORBES_ABONADOS");
     }
 
     @Test
