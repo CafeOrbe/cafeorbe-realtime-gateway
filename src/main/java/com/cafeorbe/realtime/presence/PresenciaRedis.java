@@ -77,20 +77,22 @@ public class PresenciaRedis implements Presencia, SmartLifecycle {
     }
 
     @Override
-    public int registrar(UUID subastaId, String sesionId, UUID usuarioId) {
+    public void anotar(UUID subastaId, String sesionId, UUID usuarioId) {
         String clave = clave(subastaId);
         HashOperations<String, String, String> hash = redis.opsForHash();
         hash.put(clave, campo(sesionId), usuarioId.toString());
         redis.expire(clave, VIDA);
-        return contar(clave);
     }
 
     @Override
-    public int liberar(UUID subastaId, String sesionId) {
-        String clave = clave(subastaId);
+    public void retirar(UUID subastaId, String sesionId) {
         HashOperations<String, String, String> hash = redis.opsForHash();
-        hash.delete(clave, campo(sesionId));
-        return contar(clave);
+        hash.delete(clave(subastaId), campo(sesionId));
+    }
+
+    @Override
+    public int contar(UUID subastaId) {
+        return contar(clave(subastaId));
     }
 
     /** Usuarios distintos con una conexión viva; de paso borra las conexiones de instancias que ya no laten. */

@@ -40,6 +40,8 @@ cafeorbe:
   realtime:
     # redis: backplane y presencia en Redis (varias instancias). memoria: solo pruebas / una instancia.
     modo: redis
+    # Cada cuánto se envía a una sala su conteo de conectados cuando alguien entró o salió.
+    conectados-intervalo-ms: 1000
 
 management:
   endpoints:

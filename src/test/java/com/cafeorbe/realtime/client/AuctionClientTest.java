@@ -158,11 +158,45 @@ class AuctionClientTest {
     }
 
     @Test
+    @DisplayName("noExiste(): una subasta ya confirmada no se vuelve a preguntar a auction en cada conexión")
+    void subastaConfirmadaSeRecuerda() {
+        AuctionClient cliente = vivo();
+        UUID confirmada = UUID.randomUUID();
+        codigo.set(200);
+        assertThat(cliente.noExiste(confirmada, ANA)).isFalse();
+
+        // Si volviera a preguntar, este 404 la daría por inexistente.
+        codigo.set(404);
+        idRecibido.set(null);
+        assertThat(cliente.noExiste(confirmada, ANA)).isFalse();
+        assertThat(idRecibido.get()).isNull();
+
+        // Lo recordado es por subasta: otra distinta sí se consulta.
+        assertThat(cliente.noExiste(UUID.randomUUID(), ANA)).isTrue();
+    }
+
+    @Test
+    @DisplayName("noExiste(): un 404 o un fallo de auction no se recuerdan: la siguiente conexión vuelve a preguntar")
+    void soloSeRecuerdaLoConfirmado() {
+        AuctionClient cliente = vivo();
+        UUID subasta = UUID.randomUUID();
+        codigo.set(404);
+        assertThat(cliente.noExiste(subasta, ANA)).isTrue();
+        codigo.set(503);
+        assertThat(cliente.noExiste(subasta, ANA)).isFalse();
+
+        // La subasta se crea después: ahora sí existe.
+        codigo.set(404);
+        assertThat(cliente.noExiste(subasta, ANA)).isTrue();
+    }
+
+    @Test
     @DisplayName("noExiste(): la subasta existe (200) o hay otro error, se deja entrar igualmente")
     void subastaExisteOErrorDeRed() {
         codigo.set(200);
         assertThat(vivo().noExiste(SUBASTA, ANA)).isFalse();
 
+        // Cliente nuevo: sin nada recordado, el 503 se consulta de verdad.
         codigo.set(503);
         assertThat(vivo().noExiste(SUBASTA, ANA)).isFalse();
 
