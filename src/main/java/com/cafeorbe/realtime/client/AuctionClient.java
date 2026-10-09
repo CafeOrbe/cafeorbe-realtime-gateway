@@ -15,7 +15,10 @@ import org.springframework.web.client.RestClientResponseException;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Reenvía a auction las pujas que llegan por WebSocket. El realtime-gateway no decide nada: si la puja
@@ -31,8 +34,14 @@ public class AuctionClient {
         }
     }
 
+    /** Cuánto se recuerda que una subasta existe. Una subasta creada no deja de existir. */
+    private static final long RECORDAR_NANOS = Duration.ofMinutes(5).toNanos();
+    private static final int MAXIMO_RECORDADAS = 10_000;
+
     private final RestClient cliente;
     private final ObjectMapper json;
+    /** Subastas que auction ya confirmó, con el instante hasta el que vale esa confirmación. */
+    private final Map<UUID, Long> existentes = new ConcurrentHashMap<>();
 
     public AuctionClient(@Value("${cafeorbe.auction.url}") String url,
                          @Value("${cafeorbe.auction.connect-timeout-ms}") int conexionMs,
@@ -70,6 +79,12 @@ public class AuctionClient {
      * se deja entrar: la sala carga el detalle por REST y el WebSocket se resincroniza al reconectar.
      */
     public boolean noExiste(UUID subastaId, Identidad usuario) {
+        // Cada conexión preguntaba a auction. Cuando toda una sala reconecta a la vez (un despliegue, un corte)
+        // eran cientos de consultas idénticas en un segundo, justo cuando auction también se está recuperando.
+        Long hasta = existentes.get(subastaId);
+        if (hasta != null && hasta - System.nanoTime() > 0) {
+            return false;
+        }
         try {
             cliente.get().uri("/api/subastas/{id}", subastaId)
                     .header(Cabeceras.USUARIO_ID, usuario.usuarioId().toString())
@@ -77,12 +92,20 @@ public class AuctionClient {
                     .header(Cabeceras.USUARIO_ROL, usuario.rol().name())
                     .retrieve()
                     .toBodilessEntity();
+            recordar(subastaId);
             return false;
         } catch (RestClientResponseException e) {
             return e.getStatusCode().value() == HttpStatus.NOT_FOUND.value();
         } catch (RestClientException e) {
             return false;
         }
+    }
+
+    private void recordar(UUID subastaId) {
+        if (existentes.size() >= MAXIMO_RECORDADAS) {
+            existentes.clear();
+        }
+        existentes.put(subastaId, System.nanoTime() + RECORDAR_NANOS);
     }
 
     private String mensajeDe(RestClientResponseException e) {

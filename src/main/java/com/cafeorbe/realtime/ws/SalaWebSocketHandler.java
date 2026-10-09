@@ -1,8 +1,8 @@
 package com.cafeorbe.realtime.ws;
 
 import com.cafeorbe.contracts.Rol;
-import com.cafeorbe.realtime.backplane.Difusor;
 import com.cafeorbe.realtime.client.AuctionClient;
+import com.cafeorbe.realtime.presence.AvisoDeConectados;
 import com.cafeorbe.realtime.presence.Presencia;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -30,15 +30,15 @@ public class SalaWebSocketHandler extends TextWebSocketHandler {
 
     private final Salas salas;
     private final Presencia presencia;
-    private final Difusor difusor;
+    private final AvisoDeConectados conectados;
     private final AuctionClient auction;
     private final ObjectMapper json;
 
-    public SalaWebSocketHandler(Salas salas, Presencia presencia, Difusor difusor, AuctionClient auction,
-                                ObjectMapper json) {
+    public SalaWebSocketHandler(Salas salas, Presencia presencia, AvisoDeConectados conectados,
+                                AuctionClient auction, ObjectMapper json) {
         this.salas = salas;
         this.presencia = presencia;
-        this.difusor = difusor;
+        this.conectados = conectados;
         this.auction = auction;
         this.json = json;
     }
@@ -52,9 +52,9 @@ public class SalaWebSocketHandler extends TextWebSocketHandler {
         sesion.getAttributes().put(ATRIBUTO_SESION_SEGURA, segura);
 
         salas.agregar(subastaId, new Salas.Conexion(segura, identidad));
-        int conectados = presencia.registrar(subastaId, sesion.getId(), identidad.usuarioId());
-        difusor.aSala(subastaId, "CONECTADOS", Map.of("conectados", conectados));
-        log.debug("{} entró a la sala {} ({} conectados)", identidad.nombre(), subastaId, conectados);
+        presencia.anotar(subastaId, sesion.getId(), identidad.usuarioId());
+        conectados.salaCambio(subastaId);
+        log.debug("{} entró a la sala {}", identidad.nombre(), subastaId);
     }
 
     @Override
@@ -93,8 +93,8 @@ public class SalaWebSocketHandler extends TextWebSocketHandler {
     public void afterConnectionClosed(WebSocketSession sesion, CloseStatus estado) {
         UUID subastaId = subasta(sesion);
         salas.quitar(subastaId, sesion.getId());
-        int conectados = presencia.liberar(subastaId, sesion.getId());
-        difusor.aSala(subastaId, "CONECTADOS", Map.of("conectados", conectados));
+        presencia.retirar(subastaId, sesion.getId());
+        conectados.salaCambio(subastaId);
     }
 
     @Override
