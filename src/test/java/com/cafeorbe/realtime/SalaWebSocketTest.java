@@ -283,7 +283,8 @@ class SalaWebSocketTest {
         dispatcher.despachar(Eventos.PUJA_ACEPTADA, "no es json".getBytes(StandardCharsets.UTF_8));
 
         evento(Eventos.PUJA_ACEPTADA, new PujaAceptada(SUBASTA, UUID.randomUUID(), ANA, "Ana", 110, 1, 120, Instant.now()));
-        ana.siguiente("PUJA_ACEPTADA");
+        var recibido = ana.siguiente("PUJA_ACEPTADA");
+        assertThat(recibido.get("datos").get("monto").asLong()).isEqualTo(110);
     }
 
     // ── Puja desde el cliente (HU-13) ─────────────────────────────────────
