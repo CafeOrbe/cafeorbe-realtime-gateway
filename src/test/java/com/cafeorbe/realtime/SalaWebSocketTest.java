@@ -620,7 +620,11 @@ class SalaWebSocketTest {
         for (long monto : new long[] {110, 120, 130}) {
             ana.enviar("{\"tipo\":\"PUJAR\",\"monto\":" + monto + "}");
         }
-        verify(auction, timeout(3000).times(3)).pujar(eq(subasta), any(Identidad.class), any(Long.class), any());
+        // Se espera a la lista, no a verify: Mockito anota la llamada al entrar y el monto se agrega al salir.
+        long limite = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+        while (recibidas.size() < 3 && System.nanoTime() < limite) {
+            Thread.sleep(20);
+        }
         assertThat(recibidas).containsExactly(110L, 120L, 130L);
     }
 
