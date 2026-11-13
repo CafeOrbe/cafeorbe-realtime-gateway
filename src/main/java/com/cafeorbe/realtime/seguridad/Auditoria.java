@@ -3,6 +3,7 @@ package com.cafeorbe.realtime.seguridad;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.stereotype.Component;
 
 /**
@@ -14,6 +15,7 @@ import org.springframework.stereotype.Component;
 public class Auditoria {
 
     private static final Logger log = LoggerFactory.getLogger("cafeorbe.seguridad");
+    private static final String CLAVE_CORRELACION = "correlationId";
 
     private final MeterRegistry metricas;
 
@@ -23,12 +25,17 @@ public class Auditoria {
 
     public void evento(String evento, String motivo, Object usuario, String ip, String correlationId) {
         metricas.counter("cafeorbe.seguridad.eventos", "evento", evento, "motivo", motivo).increment();
-        log.atWarn()
+        var registro = log.atWarn()
                 .addKeyValue("evento", evento)
                 .addKeyValue("motivo", motivo)
                 .addKeyValue("usuario", usuario == null ? "desconocido" : usuario.toString())
-                .addKeyValue("ip", ip == null ? "desconocida" : ip)
-                .addKeyValue("correlationId", correlationId)
-                .log("Evento de seguridad: {} ({})", evento, motivo);
+                .addKeyValue("ip", ip == null ? "desconocida" : ip);
+        // Al procesar un mensaje el correlationId ya está en el MDC y sale en el JSON. Agregarlo otra vez repite el
+        // campo, el escritor JSON falla y el evento se pierde sin aviso: solo se agrega cuando el MDC no lo trae
+        // (handshake, vigilante de sesiones).
+        if (MDC.get(CLAVE_CORRELACION) == null) {
+            registro = registro.addKeyValue(CLAVE_CORRELACION, correlationId);
+        }
+        registro.log("Evento de seguridad: {} ({})", evento, motivo);
     }
 }
