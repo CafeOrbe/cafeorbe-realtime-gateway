@@ -71,7 +71,7 @@ class AuctionClientTest {
     }
 
     private static AuctionClient cliente(String url) {
-        return new AuctionClient(url, 500, 500, new ObjectMapper());
+        return new AuctionClient(url, 500, 500, "credencial-de-prueba", new ObjectMapper());
     }
 
     private static AuctionClient vivo() {
@@ -103,6 +103,25 @@ class AuctionClientTest {
         assertThatCode(() -> vivo().pujar(SUBASTA, ANA, 100)).doesNotThrowAnyException();
 
         assertThat(idRecibido.get()).isEqualTo(ANA.usuarioId().toString());
+    }
+
+    @Test
+    @DisplayName("REN-01 · pujar(): un 422 sin evento (porEvento=false) se devuelve para avisar a quien pujó")
+    void rechazoSinEvento() {
+        codigo.set(422);
+        cuerpo.set("{\"motivo\":\"MONTO_INSUFICIENTE\",\"porEvento\":false}");
+        assertThat(vivo().pujar(SUBASTA, ANA, 100, "c-1")).hasValueSatisfying(
+                r -> assertThat(r.path("motivo").asText()).isEqualTo("MONTO_INSUFICIENTE"));
+
+        cuerpo.set("{\"motivo\":\"SALDO_INSUFICIENTE\"}");
+        assertThat(vivo().pujar(SUBASTA, ANA, 100, "c-2")).isEmpty();
+        cuerpo.set("no es json");
+        assertThat(vivo().pujar(SUBASTA, ANA, 100, "c-3")).isEmpty();
+        cuerpo.set("");
+        assertThat(vivo().pujar(SUBASTA, ANA, 100, "c-4")).isEmpty();
+        codigo.set(200);
+        cuerpo.set("{\"aceptada\":true}");
+        assertThat(vivo().pujar(SUBASTA, ANA, 100, "c-5")).isEmpty();
     }
 
     @Test

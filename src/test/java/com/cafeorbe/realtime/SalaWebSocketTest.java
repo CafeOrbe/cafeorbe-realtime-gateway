@@ -14,11 +14,10 @@ import com.cafeorbe.contracts.eventos.TransmisionDetenida;
 import com.cafeorbe.contracts.eventos.TransmisionIniciada;
 import com.cafeorbe.realtime.client.AuctionClient;
 import com.cafeorbe.realtime.handlers.EventosDispatcher;
+import com.cafeorbe.realtime.seguridad.AlmacenDeSeguridadEnMemoria;
 import com.cafeorbe.realtime.ws.Identidad;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.security.Keys;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -56,6 +55,7 @@ import static org.mockito.Mockito.when;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
+@org.springframework.boot.test.autoconfigure.actuate.observability.AutoConfigureObservability(tracing = false)
 class SalaWebSocketTest {
 
     static final String SECRETO = "cafeorbe-dev-jwt-secret-cambiar-en-prod-0123456789";
@@ -75,7 +75,12 @@ class SalaWebSocketTest {
     /** Cliente WebSocket de prueba que acumula los mensajes recibidos. */
     static class Cliente {
         final BlockingQueue<JsonNode> recibidos = new LinkedBlockingQueue<>();
+        final java.util.concurrent.CompletableFuture<Integer> cierre = new java.util.concurrent.CompletableFuture<>();
         WebSocket ws;
+
+        int codigoDeCierre(long segundos) throws Exception {
+            return cierre.get(segundos, TimeUnit.SECONDS);
+        }
 
         JsonNode siguiente(String tipo) throws InterruptedException {
             long limite = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
@@ -104,14 +109,22 @@ class SalaWebSocketTest {
         }
     }
 
+    @Autowired AlmacenDeSeguridadEnMemoria almacen;
+
+    /** SEG-04: lo que identity habría emitido; devuelve el ticket de un solo uso. */
     private String token(UUID id, String nombre, Rol rol) {
-        return Jwts.builder().subject(id.toString()).claim("nombre", nombre).claim("rol", rol.name())
-                .expiration(Date.from(Instant.now().plusSeconds(600)))
-                .signWith(Keys.hmacShaKeyFor(SECRETO.getBytes(StandardCharsets.UTF_8))).compact();
+        return ticket(id, nombre, rol, UUID.randomUUID().toString(), Instant.now().plusSeconds(600));
     }
 
-    private Cliente conectar(UUID subasta, String token) throws Exception {
-        return abrir("ws://localhost:" + puerto + "/ws/salas/" + subasta + "?token=" + token);
+    private String ticket(UUID id, String nombre, Rol rol, String jti, Instant expiraEn) {
+        String ticket = UUID.randomUUID().toString().replace("-", "");
+        almacen.guardarTicket(ticket, "{\"usuarioId\":\"" + id + "\",\"nombre\":\"" + nombre + "\",\"rol\":\""
+                + rol.name() + "\",\"jti\":\"" + jti + "\",\"expiraEn\":" + expiraEn.getEpochSecond() + "}");
+        return ticket;
+    }
+
+    private Cliente conectar(UUID subasta, String ticket) throws Exception {
+        return abrir("ws://localhost:" + puerto + "/ws/salas/" + subasta + "?ticket=" + ticket);
     }
 
     private Cliente conectarSinToken(UUID subasta) throws Exception {
@@ -119,7 +132,7 @@ class SalaWebSocketTest {
     }
 
     private Cliente conectarConSegmento(String segmento, String token) throws Exception {
-        return abrir("ws://localhost:" + puerto + "/ws/salas/" + segmento + "?token=" + token);
+        return abrir("ws://localhost:" + puerto + "/ws/salas/" + segmento + "?ticket=" + token);
     }
 
     private Cliente abrir(String destino) throws Exception {
@@ -131,6 +144,12 @@ class SalaWebSocketTest {
             @Override
             public void onOpen(WebSocket ws) {
                 ws.request(1);
+            }
+
+            @Override
+            public CompletionStage<?> onClose(WebSocket ws, int codigo, String razon) {
+                cliente.cierre.complete(codigo);
+                return null;
             }
 
             @Override
@@ -170,6 +189,7 @@ class SalaWebSocketTest {
             }
         });
         abiertos.clear();
+        almacen.limpiar();
     }
 
     private void evento(String tipo, Object datos) throws Exception {
@@ -297,14 +317,16 @@ class SalaWebSocketTest {
 
         ana.enviar("{\"tipo\":\"PUJAR\",\"monto\":110}");
 
-        verify(auction, timeout(3000)).pujar(eq(SUBASTA), eq(new Identidad(ANA, "Ana", Rol.COMPRADOR)), eq(110L));
+        verify(auction, timeout(3000)).pujar(eq(SUBASTA),
+                org.mockito.ArgumentMatchers.argThat(i -> i.usuarioId().equals(ANA) && i.rol() == Rol.COMPRADOR),
+                eq(110L), any(String.class));
     }
 
     @Test
     @DisplayName("HU-13 · Si auction falla, quien pujó recibe un ERROR con el motivo")
     void fallaDeAuction() throws Exception {
         doThrow(new AuctionClient.PujaNoEnviadaException("La subasta no existe"))
-                .when(auction).pujar(any(UUID.class), any(Identidad.class), any(Long.class));
+                .when(auction).pujar(any(UUID.class), any(Identidad.class), any(Long.class), any(String.class));
         Cliente ana = comoAna(SUBASTA);
         ana.siguiente("CONECTADOS");
 
@@ -414,7 +436,7 @@ class SalaWebSocketTest {
                 .isEqualTo("Mensaje no reconocido");
         ana.enviar("{\"tipo\":\"PING\"}");
         ana.siguiente("PONG");
-        verify(auction, never()).pujar(any(UUID.class), any(Identidad.class), any(Long.class));
+        verify(auction, never()).pujar(any(UUID.class), any(Identidad.class), any(Long.class), any());
     }
 
     @Test
@@ -427,7 +449,7 @@ class SalaWebSocketTest {
 
         assertThat(ana.siguiente("ERROR").get("datos").get("mensaje").asText())
                 .isEqualTo("El monto de la puja no es válido");
-        verify(auction, never()).pujar(any(UUID.class), any(Identidad.class), any(Long.class));
+        verify(auction, never()).pujar(any(UUID.class), any(Identidad.class), any(Long.class), any());
     }
 
     @Test
@@ -453,5 +475,154 @@ class SalaWebSocketTest {
     @DisplayName("Una conexión sin el parámetro token se rechaza")
     void sinParametroToken() {
         assertThatThrownBy(() -> conectarSinToken(SUBASTA)).isInstanceOf(ExecutionException.class);
+    }
+
+    // ── Seguridad (SEG-03, SEG-04, SEG-05) y orden (REN-01) ───────────────
+
+    @Autowired io.micrometer.core.instrument.MeterRegistry metricas;
+
+    private double eventosDeSeguridad(String evento) {
+        return metricas.find("cafeorbe.seguridad.eventos").tag("evento", evento).counters().stream()
+                .mapToDouble(io.micrometer.core.instrument.Counter::count).sum();
+    }
+
+    @Test
+    @DisplayName("SEG-04 · 10 intentos de reutilizar una URL de conexión ya usada: 0 aceptados y todos registrados")
+    void ticketReutilizado() throws Exception {
+        String ticket = token(UUID.randomUUID(), "Eva", Rol.COMPRADOR);
+        conectar(SUBASTA, ticket);
+        double antes = eventosDeSeguridad("conexion_rechazada");
+        for (int i = 0; i < 10; i++) {
+            assertThatThrownBy(() -> conectar(SUBASTA, ticket)).isInstanceOf(ExecutionException.class);
+        }
+        assertThat(eventosDeSeguridad("conexion_rechazada") - antes).isEqualTo(10);
+    }
+
+    @Test
+    @DisplayName("SEG-04 · El token de sesión en la URL ya no sirve para conectarse")
+    void tokenEnLaUrlNoSirve() {
+        assertThatThrownBy(() -> abrir("ws://localhost:" + puerto + "/ws/salas/" + SUBASTA + "?token=eyJhbGciOi.x.y"))
+                .isInstanceOf(ExecutionException.class);
+    }
+
+    @Test
+    @DisplayName("SEG-05 · Un ticket de una sesión ya cerrada o vencida no abre conexión")
+    void ticketDeSesionCerradaOVencida() {
+        String jti = UUID.randomUUID().toString();
+        almacen.cerrarSesion(jti);
+        String deCerrada = ticket(UUID.randomUUID(), "Eva", Rol.COMPRADOR, jti, Instant.now().plusSeconds(600));
+        String deVencida = ticket(UUID.randomUUID(), "Eva", Rol.COMPRADOR, "otra", Instant.now().minusSeconds(1));
+        assertThatThrownBy(() -> conectar(SUBASTA, deCerrada)).isInstanceOf(ExecutionException.class);
+        assertThatThrownBy(() -> conectar(SUBASTA, deVencida)).isInstanceOf(ExecutionException.class);
+    }
+
+    @Test
+    @DisplayName("SEG-05 · Al cerrar la sesión, su WebSocket abierto se corta en 5 s o menos (cierre 4401)")
+    void sesionCerradaCortaElWebSocket() throws Exception {
+        String jti = UUID.randomUUID().toString();
+        Cliente eva = conectar(SUBASTA, ticket(UUID.randomUUID(), "Eva", Rol.COMPRADOR, jti, Instant.now().plusSeconds(600)));
+        long inicio = System.nanoTime();
+        almacen.cerrarSesion(jti);
+        assertThat(eva.codigoDeCierre(5)).isEqualTo(4401);
+        assertThat(Duration.ofNanos(System.nanoTime() - inicio)).isLessThan(Duration.ofSeconds(5));
+    }
+
+    @Test
+    @DisplayName("SEG-05 · Cuando la sesión vence, su WebSocket se corta en 5 s o menos")
+    void sesionVencidaCortaElWebSocket() throws Exception {
+        Cliente eva = conectar(SUBASTA, ticket(UUID.randomUUID(), "Eva", Rol.COMPRADOR, "j-vence",
+                Instant.now().plusSeconds(2)));
+        assertThat(eva.codigoDeCierre(7)).isEqualTo(4401);
+    }
+
+    @Test
+    @DisplayName("SEG-03 · Ráfaga de 30 PUJAR: el excedente recibe LIMITE_DE_PUJAS, el abusador queda bloqueado y los demás siguen")
+    void rafagaDePujas() throws Exception {
+        UUID eva = UUID.randomUUID();
+        Cliente cliente = conectar(SUBASTA, token(eva, "Eva", Rol.COMPRADOR));
+        for (int i = 0; i < 30; i++) {
+            cliente.enviar("{\"tipo\":\"PUJAR\",\"monto\":" + (100 + i) + "}");
+        }
+        JsonNode error = cliente.siguiente("ERROR");
+        assertThat(error.at("/datos/motivo").asText()).isEqualTo("LIMITE_DE_PUJAS");
+        // Tras 3 infracciones en un minuto queda bloqueado: la conexión se corta con 4429.
+        assertThat(cliente.codigoDeCierre(5)).isEqualTo(4429);
+        verify(auction, org.mockito.Mockito.atMost(20)).pujar(eq(SUBASTA),
+                org.mockito.ArgumentMatchers.argThat(i -> i.usuarioId().equals(eva)), any(Long.class), any());
+        // Bloqueado: tampoco puede abrir una conexión nueva durante el bloqueo.
+        assertThatThrownBy(() -> conectar(SUBASTA, token(eva, "Eva", Rol.COMPRADOR))).isInstanceOf(ExecutionException.class);
+        // Un comprador legítimo sigue pujando sin problema.
+        Cliente bruno = comoBruno(SUBASTA);
+        bruno.enviar("{\"tipo\":\"PUJAR\",\"monto\":500}");
+        verify(auction, timeout(3000)).pujar(eq(SUBASTA),
+                org.mockito.ArgumentMatchers.argThat(i -> i.usuarioId().equals(BRUNO)), eq(500L), any());
+    }
+
+    @Test
+    @DisplayName("SEG-03 · La sexta conexión simultánea del mismo usuario se rechaza")
+    void maximoDeConexiones() throws Exception {
+        UUID eva = UUID.randomUUID();
+        for (int i = 0; i < 5; i++) {
+            conectar(SUBASTA, token(eva, "Eva", Rol.COMPRADOR));
+        }
+        assertThatThrownBy(() -> conectar(SUBASTA, token(eva, "Eva", Rol.COMPRADOR))).isInstanceOf(ExecutionException.class);
+    }
+
+    @Test
+    @DisplayName("SEG-03 · Un mensaje de más de 1 KB cierra la conexión (1009) sin llegar a auction")
+    void mensajeGrande() throws Exception {
+        Cliente cliente = conectar(SUBASTA, token(UUID.randomUUID(), "Eva", Rol.COMPRADOR));
+        cliente.enviar("{\"tipo\":\"PUJAR\",\"monto\":100,\"relleno\":\"" + "x".repeat(2000) + "\"}");
+        assertThat(cliente.codigoDeCierre(5)).isEqualTo(1009);
+        verify(auction, never()).pujar(any(UUID.class), any(Identidad.class), any(Long.class), any());
+    }
+
+    @Test
+    @DisplayName("REN-01 · Una puja que auction rechaza sin evento se le entrega directamente a quien pujó")
+    void rechazoSinEvento() throws Exception {
+        when(auction.pujar(eq(SUBASTA), any(Identidad.class), eq(10L), any())).thenReturn(java.util.Optional.of(
+                json.readTree("{\"aceptada\":false,\"monto\":10,\"motivo\":\"MONTO_INSUFICIENTE\",\"mensaje\":\"Muy bajo\",\"porEvento\":false}")));
+        Cliente ana = comoAna(SUBASTA);
+        ana.enviar("{\"tipo\":\"PUJAR\",\"monto\":10}");
+        JsonNode rechazo = ana.siguiente("PUJA_RECHAZADA");
+        assertThat(rechazo.at("/datos/motivo").asText()).isEqualTo("MONTO_INSUFICIENTE");
+        assertThat(rechazo.at("/datos/montoIntentado").asLong()).isEqualTo(10);
+    }
+
+    @Test
+    @DisplayName("REN-01 · Los mensajes de un evento de auction llevan su número de secuencia")
+    void secuencia() throws Exception {
+        Cliente ana = comoAna(SUBASTA);
+        var sobre = new EventoEnvelope<>(UUID.randomUUID(), Eventos.PUJA_ACEPTADA, 1, Instant.now(),
+                new PujaAceptada(SUBASTA, UUID.randomUUID(), BRUNO, "Bruno", 700, 3, 710, Instant.now()));
+        dispatcher.despachar(Eventos.PUJA_ACEPTADA, json.writeValueAsBytes(sobre), 42L, "corr-12345678");
+        assertThat(ana.siguiente("PUJA_ACEPTADA").path("secuencia").asLong()).isEqualTo(42);
+    }
+
+    @Test
+    @DisplayName("OBS-01 · /actuator/prometheus exige la credencial interna; la salud es abierta")
+    void metricasProtegidas() throws Exception {
+        var cliente = HttpClient.newHttpClient();
+        var sin = cliente.send(java.net.http.HttpRequest.newBuilder(URI.create("http://localhost:" + puerto
+                + "/actuator/prometheus")).build(), java.net.http.HttpResponse.BodyHandlers.ofString());
+        assertThat(sin.statusCode()).isEqualTo(403);
+        var salud = cliente.send(java.net.http.HttpRequest.newBuilder(URI.create("http://localhost:" + puerto
+                + "/actuator/health/liveness")).build(), java.net.http.HttpResponse.BodyHandlers.ofString());
+        assertThat(salud.statusCode()).isEqualTo(200);
+    }
+
+    @Test
+    @DisplayName("OBS-01/DIS-01 · Las métricas llevan la réplica (instancia) y buckets fijos en 800 ms y 1,5 s")
+    void metricasPorReplicaConUmbrales() throws Exception {
+        var cuerpo = HttpClient.newHttpClient().send(java.net.http.HttpRequest.newBuilder(URI.create(
+                        "http://localhost:" + puerto + "/actuator/prometheus"))
+                .header("X-Internal-Token", "credencial-de-prueba").build(),
+                java.net.http.HttpResponse.BodyHandlers.ofString()).body();
+
+        assertThat(cuerpo).contains("instancia=\"")
+                .containsPattern("cafeorbe_realtime_pujas_reenvio_seconds_bucket\\{[^}]*le=\"0\\.8\"")
+                .containsPattern("cafeorbe_realtime_pujas_reenvio_seconds_bucket\\{[^}]*le=\"1\\.5\"")
+                // Sin el histograma completo (~70 buckets): solo los umbrales y +Inf.
+                .doesNotContain("le=\"0.001\"");
     }
 }

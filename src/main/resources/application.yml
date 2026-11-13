@@ -1,5 +1,7 @@
 server:
   port: 8085
+  # DIS-01: al detener una réplica termina lo que esté en curso antes de apagarse; los clientes reconectan.
+  shutdown: graceful
 
 spring:
   application:
@@ -12,6 +14,8 @@ spring:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
       password: ${REDIS_PASSWORD:}
+      ssl:
+        enabled: ${REDIS_SSL:false}
   rabbitmq:
     host: ${RABBIT_HOST:localhost}
     port: ${RABBIT_PORT:5672}
@@ -28,8 +32,19 @@ spring:
         default-requeue-rejected: false
 
 cafeorbe:
-  jwt:
-    secret: ${JWT_SECRET:cafeorbe-dev-jwt-secret-cambiar-en-prod-0123456789}
+  seguridad:
+    # SEG-02: credencial que el realtime presenta a auction en X-Internal-Token y que exige en /actuator/prometheus.
+    credencial-interna: ${INTERNAL_TOKEN:cafeorbe-dev-credencial-interna-cambiar-en-prod}
+  abuso:
+    # SEG-03: límites por usuario. Tras 3 infracciones en un minuto el usuario queda bloqueado 60 s.
+    pujas-por-segundo: ${LIMITE_PUJAS_POR_SEGUNDO:10}
+    conexiones-por-usuario: ${LIMITE_CONEXIONES_POR_USUARIO:5}
+    bytes-por-mensaje: 1024
+    infracciones-para-bloquear: 3
+    segundos-de-bloqueo: 60
+  vigilante:
+    # SEG-05: cada cuánto se revisan las conexiones abiertas para cortar sesiones cerradas o vencidas.
+    intervalo-ms: 1000
   auction:
     # Las pujas que llegan por WebSocket se reenvían a auction, que las valida y decide
     url: ${AUCTION_URL:http://localhost:8082}
@@ -43,11 +58,37 @@ cafeorbe:
     # Cada cuánto se envía a una sala su conteo de conectados cuando alguien entró o salió.
     conectados-intervalo-ms: 1000
 
+logging:
+  structured:
+    # OBS-01: logs JSON con correlationId (MDC) para Log Analytics.
+    format:
+      console: ${LOG_FORMAT:logstash}
+
 management:
+  # OBS-01: el ingress de Azure reparte entre réplicas, así que un scrape por la URL pública ve una al azar.
+  # Cada réplica empuja sus métricas cada 10 s al endpoint OTLP de Grafana Cloud (sin Alloy). Apagado por defecto.
+  otlp:
+    metrics:
+      export:
+        enabled: ${OTLP_METRICS_ENABLED:false}
+        url: ${OTLP_METRICS_URL:http://localhost:4318/v1/metrics}
+        step: ${OTLP_METRICS_STEP:10s}
+        headers:
+          Authorization: ${OTLP_METRICS_AUTH:}
   endpoints:
     web:
       exposure:
-        include: health
+        include: health,prometheus
+  endpoint:
+    health:
+      # DIS-01: /actuator/health/liveness y /actuator/health/readiness para las sondas de Azure Container Apps.
+      probes:
+        enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+      # DIS-01 / OBS-01: réplica que reporta, para medir el reparto entre réplicas y ver cuál cae.
+      instancia: ${CONTAINER_APP_REPLICA_NAME:${HOSTNAME:local}}
   health:
     redis:
       enabled: false

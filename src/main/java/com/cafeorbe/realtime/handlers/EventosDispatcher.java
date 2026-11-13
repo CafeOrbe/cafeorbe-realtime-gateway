@@ -7,7 +7,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import com.cafeorbe.realtime.backplane.Difusor;
+import org.slf4j.MDC;
+
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -29,16 +33,37 @@ public class EventosDispatcher {
     }
 
     public void despachar(String tipoDeEvento, byte[] cuerpo) {
+        despachar(tipoDeEvento, cuerpo, null, null);
+    }
+
+    /**
+     * @param secuencia     REN-01: número de secuencia que puso auction (cabecera {@code x-secuencia}); puede ser nulo
+     * @param correlationId OBS-01: id de la puja que originó el evento; queda en el log para seguirla de punta a punta
+     */
+    public void despachar(String tipoDeEvento, byte[] cuerpo, Long secuencia, String correlationId) {
         ManejadorDeEvento<?> manejador = manejadores.get(tipoDeEvento);
         if (manejador == null) {
             log.debug("Evento {} sin manejador, se ignora", tipoDeEvento);
             return;
         }
+        if (correlationId != null) {
+            MDC.put("correlationId", correlationId);
+        }
         try {
-            manejar(manejador, cuerpo);
-        } catch (IOException e) {
+            Difusor.conSecuencia(secuencia, () -> {
+                try {
+                    manejar(manejador, cuerpo);
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            });
+            log.atInfo().addKeyValue("evento", tipoDeEvento).addKeyValue("secuencia", secuencia)
+                    .log("Evento {} difundido a la sala", tipoDeEvento);
+        } catch (UncheckedIOException e) {
             // Un mensaje ilegible nunca se va a poder procesar: se descarta en vez de reintentarlo sin fin.
-            log.error("No se pudo leer el evento {}: {}", tipoDeEvento, e.getMessage());
+            log.error("No se pudo leer el evento {}: {}", tipoDeEvento, e.getCause().getMessage());
+        } finally {
+            MDC.remove("correlationId");
         }
     }
 

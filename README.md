@@ -98,15 +98,16 @@ flowchart TB
 ### Conexión
 
 ```text
-ws://host:8085/ws/salas/{subastaId}?token={JWT}
+ws://host:8085/ws/salas/{subastaId}?ticket={ticket}
 ```
 
-El token viaja en la URL porque un navegador no puede enviar cabeceras al abrir un WebSocket. El handshake se rechaza antes de abrir la conexión si algo falla:
+Un navegador no puede enviar cabeceras al abrir un WebSocket, así que algo tiene que ir en la URL. **SEG-04:** ese algo es un ticket de un solo uso que emite identity (`POST /api/sesion/ticket-ws`), no el token de sesión. El realtime-gateway lo lee y lo borra en una sola operación atómica (un script Lua, compatible con Azure Cache for Redis 6.0, que no tiene `GETDEL`): si la URL queda en un log, ya no sirve. El handshake se rechaza antes de abrir la conexión si algo falla, y cada rechazo queda en la auditoría con usuario, IP, motivo y correlationId:
 
 | HTTP | Cuándo |
 |:-:|---|
 | `400` | El id de la subasta no es un UUID |
-| `401` | Token ausente, inválido o vencido |
+| `401` | Ticket ausente, ya usado o vencido; o la sesión del ticket ya se cerró o venció |
+| `429` | El usuario está bloqueado por abuso o ya tiene 5 conexiones abiertas (SEG-03) |
 | `404` | auction-service confirma que la subasta no existe |
 
 Si auction-service no responde, se deja entrar: la sala carga su detalle por REST y el WebSocket se resincroniza al reconectar.
@@ -247,7 +248,9 @@ El hash de cada sala expira solo tras 6 horas sin actividad.
 | `RABBIT_HOST` `RABBIT_PORT` `RABBIT_USER` `RABBIT_PASSWORD` | `localhost:5672` | Broker de eventos |
 | `RABBIT_VHOST` `RABBIT_SSL` | `/` · `false` | Broker gestionado con TLS |
 | `AUCTION_URL` | `http://localhost:8082` | Reenvío de pujas y verificación de la sala |
-| `JWT_SECRET` | valor de desarrollo | El mismo que identity y api-gateway |
+| `INTERNAL_TOKEN` | valor de desarrollo | Credencial que presenta a auction y que exige en `/actuator/prometheus` (SEG-02) |
+| `REDIS_SSL` | `false` | `true` con Azure Cache for Redis en el puerto `6380` |
+| `LIMITE_PUJAS_POR_SEGUNDO` `LIMITE_CONEXIONES_POR_USUARIO` | `10` · `5` | SEG-03. Tres infracciones en un minuto bloquean al usuario 60 s |
 | `CORS_ORIGINS` | `http://localhost:5173` | Orígenes permitidos para abrir el WebSocket |
 
 `cafeorbe.realtime.modo`: `redis` (por defecto) o `memoria`.

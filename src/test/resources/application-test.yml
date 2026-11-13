@@ -9,4 +9,13 @@ cafeorbe:
     origins: "*"
   realtime:
     modo: memoria
+  seguridad:
+    credencial-interna: credencial-de-prueba
+  vigilante:
+    intervalo-ms: 100
     conectados-intervalo-ms: 50
+
+logging:
+  structured:
+    format:
+      console: ""

@@ -3,6 +3,7 @@ package com.cafeorbe.realtime.client;
 import com.cafeorbe.contracts.Cabeceras;
 import com.cafeorbe.contracts.dto.PujaSolicitud;
 import com.cafeorbe.realtime.ws.Identidad;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -17,6 +18,7 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -43,34 +45,67 @@ public class AuctionClient {
     /** Subastas que auction ya confirmó, con el instante hasta el que vale esa confirmación. */
     private final Map<UUID, Long> existentes = new ConcurrentHashMap<>();
 
+    /** SEG-02: credencial que auction exige en X-Internal-Token. */
+    static final String CABECERA_CREDENCIAL = "X-Internal-Token";
+    static final String CABECERA_CORRELACION = "X-Correlation-Id";
+
     public AuctionClient(@Value("${cafeorbe.auction.url}") String url,
                          @Value("${cafeorbe.auction.connect-timeout-ms}") int conexionMs,
                          @Value("${cafeorbe.auction.read-timeout-ms}") int lecturaMs,
+                         @Value("${cafeorbe.seguridad.credencial-interna}") String credencial,
                          ObjectMapper json) {
         var fabrica = new SimpleClientHttpRequestFactory();
         fabrica.setConnectTimeout(conexionMs);
         fabrica.setReadTimeout(lecturaMs);
-        this.cliente = RestClient.builder().baseUrl(url).requestFactory(fabrica).build();
+        this.cliente = RestClient.builder().baseUrl(url).requestFactory(fabrica)
+                .defaultHeader(CABECERA_CREDENCIAL, credencial).build();
         this.json = json;
     }
 
-    /** HTTP 200 (aceptada) y 422 (rechazada con motivo) son respuestas normales: el motivo llega por evento. */
-    public void pujar(UUID subastaId, Identidad usuario, long monto) {
+    /**
+     * HTTP 200 (aceptada) y 422 (rechazada con motivo) son respuestas normales. Casi siempre el resultado llega a
+     * la sala por evento; la excepción es REN-01: una puja que ya no supera el precio la rechaza auction sin abrir
+     * transacción ni publicar evento ({@code porEvento=false}), y entonces el rechazo se devuelve aquí para
+     * entregárselo directamente a quien pujó.
+     *
+     * @param correlationId OBS-01: viaja en X-Correlation-Id para seguir la puja por auction, wallet y el broker
+     * @return el cuerpo del rechazo cuando no habrá evento, vacío en cualquier otro caso
+     */
+    public Optional<JsonNode> pujar(UUID subastaId, Identidad usuario, long monto, String correlationId) {
         try {
-            cliente.post().uri("/api/subastas/{id}/pujas", subastaId)
+            var entidad = cliente.post().uri("/api/subastas/{id}/pujas", subastaId)
                     .header(Cabeceras.USUARIO_ID, usuario.usuarioId().toString())
                     .header(Cabeceras.USUARIO_NOMBRE, URLEncoder.encode(usuario.nombre(), StandardCharsets.UTF_8))
                     .header(Cabeceras.USUARIO_ROL, usuario.rol().name())
+                    .header(CABECERA_CORRELACION, correlationId == null ? UUID.randomUUID().toString() : correlationId)
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(new PujaSolicitud(monto))
                     .retrieve()
                     .onStatus(estado -> estado.value() == HttpStatus.UNPROCESSABLE_ENTITY.value(), (req, res) -> {
                     })
-                    .toBodilessEntity();
+                    .toEntity(String.class);
+            return rechazoSinEvento(entidad.getStatusCode().value(), entidad.getBody());
         } catch (RestClientResponseException e) {
             throw new PujaNoEnviadaException(mensajeDe(e));
         } catch (RestClientException e) {
             throw new PujaNoEnviadaException("No se pudo enviar la puja, intenta de nuevo");
+        }
+    }
+
+    /** Compatibilidad: reenvía sin correlationId. */
+    public void pujar(UUID subastaId, Identidad usuario, long monto) {
+        pujar(subastaId, usuario, monto, null);
+    }
+
+    private Optional<JsonNode> rechazoSinEvento(int estado, String cuerpo) {
+        if (estado != HttpStatus.UNPROCESSABLE_ENTITY.value() || cuerpo == null || cuerpo.isBlank()) {
+            return Optional.empty();
+        }
+        try {
+            JsonNode respuesta = json.readTree(cuerpo);
+            return respuesta.path("porEvento").asBoolean(true) ? Optional.empty() : Optional.of(respuesta);
+        } catch (Exception e) {
+            return Optional.empty();
         }
     }
 
