@@ -9,7 +9,6 @@
 | `AZURE_CREDENTIALS` | inicio de sesión en Azure |
 | `ACR_USERNAME`, `ACR_PASSWORD` | push de la imagen a `vars.ACR_NAME`.azurecr.io |
 | `SONAR_TOKEN` | Quality Gate (secreto de organización) |
-| `JWT_SECRET` | validación de la sesión |
 | `INTERNAL_TOKEN` | credencial interna SEG-02; **el mismo valor en los 6 servicios** |
 | `REDIS_PASSWORD` | autenticación con Azure Cache for Redis |
 | `RABBIT_PASSWORD` | CloudAMQP |
