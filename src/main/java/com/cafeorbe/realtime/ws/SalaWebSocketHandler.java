@@ -165,13 +165,13 @@ public class SalaWebSocketHandler extends TextWebSocketHandler {
      * una espera a la anterior en un hilo virtual. Lo pendiente está acotado por el mismo límite.
      */
     private void encolar(WebSocketSession sesion, Runnable reenvio) {
-        synchronized (sesion) {
-            CompletableFuture<?> anterior = (CompletableFuture<?>) sesion.getAttributes()
-                    .getOrDefault(ATRIBUTO_COLA_DE_PUJAS, CompletableFuture.completedFuture(null));
-            // exceptionally: una puja que falló no deja trabadas las siguientes de la misma conexión.
-            sesion.getAttributes().put(ATRIBUTO_COLA_DE_PUJAS,
-                    anterior.exceptionally(error -> null).thenRunAsync(reenvio, reenvios));
-        }
+        // Sin bloqueo: solo se llama desde handleTextMessage, y el contenedor entrega los mensajes de una misma
+        // conexión de a uno (JSR-356), así que nunca hay dos hilos leyendo y escribiendo esta cola a la vez.
+        CompletableFuture<?> anterior = (CompletableFuture<?>) sesion.getAttributes()
+                .getOrDefault(ATRIBUTO_COLA_DE_PUJAS, CompletableFuture.completedFuture(null));
+        // exceptionally: una puja que falló no deja trabadas las siguientes de la misma conexión.
+        sesion.getAttributes().put(ATRIBUTO_COLA_DE_PUJAS,
+                anterior.exceptionally(error -> null).thenRunAsync(reenvio, reenvios));
     }
 
     private void reenviar(WebSocketSession sesion, Identidad identidad, UUID subastaId, long monto, String correlacion) {
