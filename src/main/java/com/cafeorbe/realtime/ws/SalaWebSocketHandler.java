@@ -140,8 +140,14 @@ public class SalaWebSocketHandler extends TextWebSocketHandler {
         log.atInfo().addKeyValue("subastaId", subastaId).addKeyValue("usuario", identidad.usuarioId())
                 .addKeyValue("monto", monto).log("Puja recibida por WebSocket");
         try {
-            var rechazo = reenvio.record(() -> auction.pujar(subastaId, identidad, monto, correlacion));
-            if (rechazo != null && rechazo.isPresent()) {
+            var muestra = Timer.start();
+            java.util.Optional<JsonNode> rechazo;
+            try {
+                rechazo = auction.pujar(subastaId, identidad, monto, correlacion);
+            } finally {
+                muestra.stop(reenvio);
+            }
+            if (rechazo.isPresent()) {
                 responder(sesion, subastaId, "PUJA_RECHAZADA", rechazoDirecto(subastaId, identidad, rechazo.get()));
             }
         } catch (AuctionClient.PujaNoEnviadaException e) {

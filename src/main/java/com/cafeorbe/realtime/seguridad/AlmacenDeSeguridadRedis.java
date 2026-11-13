@@ -1,6 +1,7 @@
 package com.cafeorbe.realtime.seguridad;
 
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.annotation.Primary;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Component;
@@ -15,6 +16,8 @@ import java.util.Set;
 import java.util.UUID;
 
 @Component
+// Implementación por defecto. La de memoria depende de la misma propiedad con otro valor: nunca existen las dos.
+@Primary
 @ConditionalOnProperty(name = "cafeorbe.realtime.modo", havingValue = "redis", matchIfMissing = true)
 public class AlmacenDeSeguridadRedis implements AlmacenDeSeguridad {
 
