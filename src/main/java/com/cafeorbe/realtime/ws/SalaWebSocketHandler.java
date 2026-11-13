@@ -25,6 +25,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import jakarta.annotation.PreDestroy;
 
 /**
  * Una sala WebSocket por subasta. Al entrar registra la presencia y avisa el conteo de conectados (HU-05, HU-15);
@@ -43,6 +47,10 @@ public class SalaWebSocketHandler extends TextWebSocketHandler {
 
     private static final Logger log = LoggerFactory.getLogger(SalaWebSocketHandler.class);
     private static final String ATRIBUTO_SESION_SEGURA = "sesionSegura";
+    private static final String ATRIBUTO_COLA_DE_PUJAS = "colaDePujas";
+
+    /** Un hilo virtual por reenvío a auction (Java 21): esperar la respuesta no ocupa un hilo del sistema. */
+    private final ExecutorService reenvios = Executors.newVirtualThreadPerTaskExecutor();
 
     /** Cierres con motivo tipificado (rango 4000-4999 reservado a la aplicación). */
     public static final CloseStatus CIERRE_SESION = new CloseStatus(4401, "Sesión cerrada o vencida");
@@ -139,6 +147,37 @@ public class SalaWebSocketHandler extends TextWebSocketHandler {
         metricas.counter("cafeorbe.realtime.pujas.recibidas").increment();
         log.atInfo().addKeyValue("subastaId", subastaId).addKeyValue("usuario", identidad.usuarioId())
                 .addKeyValue("monto", monto).log("Puja recibida por WebSocket");
+        encolar(sesion, () -> {
+            MDC.put("correlationId", correlacion);
+            try {
+                reenviar(sesion, identidad, subastaId, monto, correlacion);
+            } finally {
+                MDC.remove("correlationId");
+            }
+        });
+    }
+
+    /**
+     * SEG-03: el reenvío a auction no bloquea la lectura de la conexión. Si lo hiciera, cada mensaje esperaría a
+     * que auction respondiera el anterior (cientos de ms con la base en otra región), las pujas entrarían más
+     * lento de lo que el atacante las manda y el límite por segundo nunca se alcanzaría. Así el límite se mide al
+     * llegar cada mensaje, y las pujas aceptadas de una misma conexión siguen llegando a auction en orden: cada
+     * una espera a la anterior en un hilo virtual. Lo pendiente está acotado por el mismo límite.
+     */
+    private void encolar(WebSocketSession sesion, Runnable reenvio) {
+        synchronized (sesion) {
+            CompletableFuture<?> anterior = (CompletableFuture<?>) sesion.getAttributes()
+                    .getOrDefault(ATRIBUTO_COLA_DE_PUJAS, CompletableFuture.completedFuture(null));
+            // exceptionally: una puja que falló no deja trabadas las siguientes de la misma conexión.
+            sesion.getAttributes().put(ATRIBUTO_COLA_DE_PUJAS,
+                    anterior.exceptionally(error -> null).thenRunAsync(reenvio, reenvios));
+        }
+    }
+
+    private void reenviar(WebSocketSession sesion, Identidad identidad, UUID subastaId, long monto, String correlacion) {
+        if (abuso.estaBloqueado(identidad.usuarioId())) {
+            return; // quedó bloqueado mientras esta puja esperaba turno: no llega a auction
+        }
         try {
             var muestra = Timer.start();
             java.util.Optional<JsonNode> rechazo;
@@ -152,7 +191,17 @@ public class SalaWebSocketHandler extends TextWebSocketHandler {
             }
         } catch (AuctionClient.PujaNoEnviadaException e) {
             responder(sesion, subastaId, "ERROR", Map.of("mensaje", e.getMessage()));
+        } catch (RuntimeException e) {
+            // Sin esto la excepción quedaría en el CompletableFuture y quien pujó no sabría nada.
+            log.warn("No se pudo reenviar la puja a auction: {}", e.getMessage());
+            responder(sesion, subastaId, "ERROR", Map.of("mensaje", "No se pudo registrar la puja, intenta de nuevo"));
         }
+    }
+
+    /** Al apagar, espera a que terminen las pujas ya aceptadas por el límite antes de soltar la réplica. */
+    @PreDestroy
+    void terminarReenvios() {
+        reenvios.close();
     }
 
     /** Mismo formato que el evento PujaRechazada, para que el navegador lo trate igual. */

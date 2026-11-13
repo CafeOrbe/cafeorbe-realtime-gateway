@@ -427,7 +427,8 @@ class SalaWebSocketTest {
     @Test
     @DisplayName("Un tipo de mensaje desconocido responde ERROR y la sala sigue viva")
     void tipoDeMensajeDesconocido() throws Exception {
-        Cliente ana = comoAna(SUBASTA);
+        UUID subasta = UUID.randomUUID(); // propia: el reenvío corre aparte y otras pruebas pueden seguir pujando
+        Cliente ana = comoAna(subasta);
         ana.siguiente("CONECTADOS");
 
         ana.enviar("{\"tipo\":\"COBRAR\",\"monto\":9999}");
@@ -436,20 +437,22 @@ class SalaWebSocketTest {
                 .isEqualTo("Mensaje no reconocido");
         ana.enviar("{\"tipo\":\"PING\"}");
         ana.siguiente("PONG");
-        verify(auction, never()).pujar(any(UUID.class), any(Identidad.class), any(Long.class), any());
+        verify(auction, never()).pujar(eq(subasta), any(Identidad.class), any(Long.class), any());
     }
 
     @Test
     @DisplayName("Una puja con un monto que no es número se rechaza sin llegar a auction")
     void montoNoNumerico() throws Exception {
-        Cliente ana = comoAna(SUBASTA);
+        UUID subasta = UUID.randomUUID();
+        Cliente ana = comoAna(subasta);
         ana.siguiente("CONECTADOS");
 
         ana.enviar("{\"tipo\":\"PUJAR\",\"monto\":\"mucho\"}");
 
         assertThat(ana.siguiente("ERROR").get("datos").get("mensaje").asText())
                 .isEqualTo("El monto de la puja no es válido");
-        verify(auction, never()).pujar(any(UUID.class), any(Identidad.class), any(Long.class), any());
+        Thread.sleep(300); // da tiempo a un reenvío en segundo plano, si lo hubiera
+        verify(auction, never()).pujar(eq(subasta), any(Identidad.class), any(Long.class), any());
     }
 
     @Test
@@ -559,6 +562,69 @@ class SalaWebSocketTest {
     }
 
     @Test
+    @DisplayName("SEG-03 · Con auction lento (300 ms por puja, como en QA) la ráfaga igual se corta: el límite cuenta al llegar")
+    void rafagaConAuctionLento() throws Exception {
+        when(auction.pujar(eq(SUBASTA), any(Identidad.class), any(Long.class), any())).thenAnswer(invocacion -> {
+            Thread.sleep(300);
+            return java.util.Optional.empty();
+        });
+        UUID eva = UUID.randomUUID();
+        Cliente cliente = conectar(SUBASTA, token(eva, "Eva", Rol.COMPRADOR));
+        long inicio = System.nanoTime();
+        for (int i = 0; i < 30 && !cliente.cierre.isDone(); i++) {
+            try {
+                cliente.ws.sendText("{\"tipo\":\"PUJAR\",\"monto\":" + (100 + i) + "}", true).join();
+            } catch (java.util.concurrent.CompletionException cortada) {
+                break; // el servidor ya cerró la conexión: eso es lo que se espera
+            }
+            Thread.sleep(33);
+        }
+        assertThat(cliente.siguiente("ERROR").at("/datos/motivo").asText()).isEqualTo("LIMITE_DE_PUJAS");
+        assertThat(cliente.codigoDeCierre(5)).isEqualTo(4429);
+        // El corte llega mientras dura la ráfaga, no cuando auction termina de procesar la cola.
+        assertThat(Duration.ofNanos(System.nanoTime() - inicio)).isLessThan(Duration.ofSeconds(3));
+        // Lo que quedó en cola tras el bloqueo no llega a auction: como mucho las ~10 que el límite dejó pasar.
+        Thread.sleep(3500);
+        verify(auction, org.mockito.Mockito.atMost(12)).pujar(eq(SUBASTA),
+                org.mockito.ArgumentMatchers.argThat(i -> i.usuarioId().equals(eva)), any(Long.class), any());
+    }
+
+    @Test
+    @DisplayName("HU-13 · Un error inesperado al reenviar avisa a quien pujó y no traba sus pujas siguientes")
+    void errorInesperadoNoTrabaLaCola() throws Exception {
+        UUID subasta = UUID.randomUUID();
+        when(auction.pujar(eq(subasta), any(Identidad.class), eq(110L), any())).thenThrow(new IllegalStateException("caído"));
+        Cliente ana = comoAna(subasta);
+        ana.siguiente("CONECTADOS");
+
+        ana.enviar("{\"tipo\":\"PUJAR\",\"monto\":110}");
+        assertThat(ana.siguiente("ERROR").at("/datos/mensaje").asText()).isEqualTo("No se pudo registrar la puja, intenta de nuevo");
+
+        ana.enviar("{\"tipo\":\"PUJAR\",\"monto\":120}");
+        verify(auction, timeout(3000)).pujar(eq(subasta), any(Identidad.class), eq(120L), any());
+    }
+
+    @Test
+    @DisplayName("HU-13 · Las pujas de una misma conexión llegan a auction en el orden en que se enviaron")
+    void pujasEnOrden() throws Exception {
+        List<Long> recibidas = java.util.Collections.synchronizedList(new ArrayList<>());
+        UUID subasta = UUID.randomUUID();
+        when(auction.pujar(eq(subasta), any(Identidad.class), any(Long.class), any())).thenAnswer(invocacion -> {
+            long monto = invocacion.getArgument(2);
+            Thread.sleep(monto == 110 ? 200 : 10); // la primera tarda más: si se adelantara otra, el orden cambiaría
+            recibidas.add(monto);
+            return java.util.Optional.empty();
+        });
+        Cliente ana = comoAna(subasta);
+        ana.siguiente("CONECTADOS");
+        for (long monto : new long[] {110, 120, 130}) {
+            ana.enviar("{\"tipo\":\"PUJAR\",\"monto\":" + monto + "}");
+        }
+        verify(auction, timeout(3000).times(3)).pujar(eq(subasta), any(Identidad.class), any(Long.class), any());
+        assertThat(recibidas).containsExactly(110L, 120L, 130L);
+    }
+
+    @Test
     @DisplayName("SEG-03 · La sexta conexión simultánea del mismo usuario se rechaza")
     void maximoDeConexiones() throws Exception {
         UUID eva = UUID.randomUUID();
@@ -571,10 +637,12 @@ class SalaWebSocketTest {
     @Test
     @DisplayName("SEG-03 · Un mensaje de más de 1 KB cierra la conexión (1009) sin llegar a auction")
     void mensajeGrande() throws Exception {
-        Cliente cliente = conectar(SUBASTA, token(UUID.randomUUID(), "Eva", Rol.COMPRADOR));
+        UUID subasta = UUID.randomUUID();
+        Cliente cliente = conectar(subasta, token(UUID.randomUUID(), "Eva", Rol.COMPRADOR));
         cliente.enviar("{\"tipo\":\"PUJAR\",\"monto\":100,\"relleno\":\"" + "x".repeat(2000) + "\"}");
         assertThat(cliente.codigoDeCierre(5)).isEqualTo(1009);
-        verify(auction, never()).pujar(any(UUID.class), any(Identidad.class), any(Long.class), any());
+        Thread.sleep(300);
+        verify(auction, never()).pujar(eq(subasta), any(Identidad.class), any(Long.class), any());
     }
 
     @Test
