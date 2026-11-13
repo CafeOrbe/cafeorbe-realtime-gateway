@@ -9,6 +9,7 @@ import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -40,6 +41,11 @@ public class Salas {
         });
     }
 
+    /** Todas las conexiones abiertas en esta instancia, de todas las salas. */
+    public List<Conexion> todas() {
+        return salas.values().stream().flatMap(c -> c.values().stream()).toList();
+    }
+
     public int conexionesLocales(UUID subastaId) {
         return salas.getOrDefault(subastaId, Map.of()).size();
     }
@@ -52,7 +58,7 @@ public class Salas {
         }
         String texto;
         try {
-            texto = json.writeValueAsString(new Mensaje(sobre.tipo(), sobre.subastaId(), sobre.datos()));
+            texto = json.writeValueAsString(new Mensaje(sobre.tipo(), sobre.subastaId(), sobre.datos(), sobre.secuencia()));
         } catch (JsonProcessingException e) {
             log.error("No se pudo serializar el mensaje {}", sobre.tipo(), e);
             return;

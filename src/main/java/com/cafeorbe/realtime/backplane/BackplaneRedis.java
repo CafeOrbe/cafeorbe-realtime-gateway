@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.annotation.Primary;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.connection.MessageListener;
@@ -23,6 +24,8 @@ import java.nio.charset.StandardCharsets;
  * (incluida la propia) los reciben y los entregan a sus conexiones locales.
  */
 @Configuration
+// Implementación por defecto. La de memoria depende de la misma propiedad con otro valor: nunca existen las dos.
+@Primary
 @ConditionalOnProperty(name = "cafeorbe.realtime.modo", havingValue = "redis", matchIfMissing = true)
 public class BackplaneRedis implements Backplane {
 

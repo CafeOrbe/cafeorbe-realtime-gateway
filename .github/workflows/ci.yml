@@ -36,10 +36,15 @@ jobs:
       - name: Build and test
         run: mvn -B verify
 
-      - name: SonarQube scan
+      # MAN-01: el análisis espera el Quality Gate de SonarQube Cloud (máx. 10 min). Si no pasa, el job queda en
+      # rojo y, con la protección de rama de main, el pull request no se puede integrar.
+      - name: SonarQube scan y Quality Gate
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        run: mvn -B org.sonarsource.scanner.maven:sonar-maven-plugin:sonar
+        run: >-
+          mvn -B org.sonarsource.scanner.maven:sonar-maven-plugin:sonar
+          -Dsonar.qualitygate.wait=true
+          -Dsonar.qualitygate.timeout=600
 
   build-push:
     needs: ci
@@ -89,11 +94,25 @@ jobs:
       - name: Deploy QA Container App
         env:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          # Sprint 2 (SEG-02): credencial interna, la misma en los 6 servicios.
+          INTERNAL_TOKEN: ${{ secrets.INTERNAL_TOKEN }}
+          # OBS-01: métricas por OTLP hacia Grafana Cloud (apagado si no se define la variable).
+          OTLP_METRICS_ENABLED: ${{ vars.OTLP_METRICS_ENABLED || 'false' }}
+          OTLP_METRICS_URL: ${{ vars.OTLP_METRICS_URL || 'http://localhost:4318/v1/metrics' }}
+          OTLP_METRICS_AUTH: ${{ secrets.OTLP_METRICS_AUTH }}
+          # SEG-03/04/05: Redis compartido (tickets, sesiones cerradas, límites). TLS por defecto.
+          REDIS_HOST: ${{ vars.REDIS_HOST }}
+          REDIS_PORT: ${{ vars.REDIS_PORT || '6380' }}
+          REDIS_SSL: ${{ vars.REDIS_SSL || 'true' }}
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
           RABBIT_PASSWORD: ${{ secrets.RABBIT_PASSWORD }}
           REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
         run: |
           set -euo pipefail
+
+          # Sin estos valores el servicio arranca, pero QA queda roto: mejor fallar aquí con un mensaje claro.
+          : "${INTERNAL_TOKEN:?Falta el secreto INTERNAL_TOKEN en GitHub (el mismo en los 6 repositorios)}"
+          : "${REDIS_HOST:?Falta la variable REDIS_HOST en GitHub (ver PLAN_AZURE_SPRINT2.md, sección 3)}"
 
           APP_NAME="realtime-gateway"
           RESOURCE_GROUP="cafeorbe-org"
@@ -118,15 +137,20 @@ jobs:
             --min-replicas 1 \
             --set-env-vars \
               "JWT_SECRET=$JWT_SECRET" \
+              "INTERNAL_TOKEN=$INTERNAL_TOKEN" \
+              "OTLP_METRICS_ENABLED=$OTLP_METRICS_ENABLED" \
+              "OTLP_METRICS_URL=$OTLP_METRICS_URL" \
+              "OTLP_METRICS_AUTH=$OTLP_METRICS_AUTH" \
               "RABBIT_HOST=toucan.lmq.cloudamqp.com" \
               "RABBIT_PORT=5671" \
               "RABBIT_USER=ebmfpsvi" \
               "RABBIT_PASSWORD=$RABBIT_PASSWORD" \
               "RABBIT_VHOST=ebmfpsvi" \
               "RABBIT_SSL=true" \
-              "REDIS_HOST=cafeorbe-redis.redis.cache.windows.net" \
-              "REDIS_PORT=6379" \
+              "REDIS_HOST=$REDIS_HOST" \
+              "REDIS_PORT=$REDIS_PORT" \
               "REDIS_PASSWORD=$REDIS_PASSWORD" \
+              "REDIS_SSL=$REDIS_SSL" \
               "AUCTION_URL=https://auction-service.blackbay-48700ead.eastus2.azurecontainerapps.io" \
               "CORS_ORIGINS=https://cafeorbe-web.vercel.app"
 
@@ -163,11 +187,25 @@ jobs:
       - name: Deploy PROD Container App
         env:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          # Sprint 2 (SEG-02): credencial interna, la misma en los 6 servicios.
+          INTERNAL_TOKEN: ${{ secrets.INTERNAL_TOKEN }}
+          # OBS-01: métricas por OTLP hacia Grafana Cloud (apagado si no se define la variable).
+          OTLP_METRICS_ENABLED: ${{ vars.OTLP_METRICS_ENABLED || 'false' }}
+          OTLP_METRICS_URL: ${{ vars.OTLP_METRICS_URL || 'http://localhost:4318/v1/metrics' }}
+          OTLP_METRICS_AUTH: ${{ secrets.OTLP_METRICS_AUTH }}
+          # SEG-03/04/05: Redis compartido (tickets, sesiones cerradas, límites). TLS por defecto.
+          REDIS_HOST: ${{ vars.REDIS_HOST }}
+          REDIS_PORT: ${{ vars.REDIS_PORT || '6380' }}
+          REDIS_SSL: ${{ vars.REDIS_SSL || 'true' }}
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
           RABBIT_PASSWORD: ${{ secrets.RABBIT_PASSWORD }}
           REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
         run: |
           set -euo pipefail
+
+          # Sin estos valores el servicio arranca, pero QA queda roto: mejor fallar aquí con un mensaje claro.
+          : "${INTERNAL_TOKEN:?Falta el secreto INTERNAL_TOKEN en GitHub (el mismo en los 6 repositorios)}"
+          : "${REDIS_HOST:?Falta la variable REDIS_HOST en GitHub (ver PLAN_AZURE_SPRINT2.md, sección 3)}"
 
           APP_NAME="realtime-gateway-prod"
           RESOURCE_GROUP="cafeorbe-org"
@@ -192,15 +230,20 @@ jobs:
             --min-replicas 1 \
             --set-env-vars \
               "JWT_SECRET=$JWT_SECRET" \
+              "INTERNAL_TOKEN=$INTERNAL_TOKEN" \
+              "OTLP_METRICS_ENABLED=$OTLP_METRICS_ENABLED" \
+              "OTLP_METRICS_URL=$OTLP_METRICS_URL" \
+              "OTLP_METRICS_AUTH=$OTLP_METRICS_AUTH" \
               "RABBIT_HOST=toucan.lmq.cloudamqp.com" \
               "RABBIT_PORT=5671" \
               "RABBIT_USER=ebmfpsvi" \
               "RABBIT_PASSWORD=$RABBIT_PASSWORD" \
               "RABBIT_VHOST=ebmfpsvi" \
               "RABBIT_SSL=true" \
-              "REDIS_HOST=cafeorbe-redis.redis.cache.windows.net" \
-              "REDIS_PORT=6379" \
+              "REDIS_HOST=$REDIS_HOST" \
+              "REDIS_PORT=$REDIS_PORT" \
               "REDIS_PASSWORD=$REDIS_PASSWORD" \
+              "REDIS_SSL=$REDIS_SSL" \
               "AUCTION_URL=https://auction-service-prod.thankfulmoss-4f48ec41.eastus2.azurecontainerapps.io" \
               "CORS_ORIGINS=https://cafeorbe-web.vercel.app"
 

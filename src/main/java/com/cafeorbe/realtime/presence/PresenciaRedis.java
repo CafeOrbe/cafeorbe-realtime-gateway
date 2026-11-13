@@ -2,6 +2,7 @@ package com.cafeorbe.realtime.presence;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.annotation.Primary;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.data.redis.core.HashOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -24,6 +25,8 @@ import java.util.UUID;
  * para que no queden como conectados fantasma.
  */
 @Component
+// Implementación por defecto. La de memoria depende de la misma propiedad con otro valor: nunca existen las dos.
+@Primary
 @ConditionalOnProperty(name = "cafeorbe.realtime.modo", havingValue = "redis", matchIfMissing = true)
 public class PresenciaRedis implements Presencia, SmartLifecycle {
 
