@@ -691,7 +691,8 @@ class SalaWebSocketTest {
                 .header("X-Internal-Token", "credencial-de-prueba").build(),
                 java.net.http.HttpResponse.BodyHandlers.ofString()).body();
 
-        assertThat(cuerpo).contains("instancia=\"")
+        // Sin CONTAINER_APP_REPLICA_NAME (ambiente express) cada réplica usa un id propio, no el hostname compartido.
+        assertThat(cuerpo).containsPattern("instancia=\"[0-9a-f]{8}-[0-9a-f]{4}-")
                 .containsPattern("cafeorbe_realtime_pujas_reenvio_seconds_bucket\\{[^}]*le=\"0\\.8\"")
                 .containsPattern("cafeorbe_realtime_pujas_reenvio_seconds_bucket\\{[^}]*le=\"1\\.5\"")
                 // Sin el histograma completo (~70 buckets): solo los umbrales y +Inf.
