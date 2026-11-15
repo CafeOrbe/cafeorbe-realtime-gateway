@@ -18,6 +18,9 @@ import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import jakarta.annotation.PreDestroy;
 
 /**
  * Backplane pub/sub sobre Redis: cada instancia publica los mensajes en un canal y todas
@@ -49,12 +52,26 @@ public class BackplaneRedis implements Backplane {
         }
     }
 
+    private final ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
+        var hilo = new Thread(r, "redis-backplane");
+        hilo.setDaemon(true);
+        return hilo;
+    });
+
     @Bean
     RedisMessageListenerContainer contenedorRedis(RedisConnectionFactory conexiones, Salas salas) {
         var contenedor = new RedisMessageListenerContainer();
         contenedor.setConnectionFactory(conexiones);
+        // REN-01: executor mono-hilo para garantizar procesamiento FIFO estricto de eventos de Redis,
+        // evitando inversión de secuencias cuando dos eventos llegan en el mismo milisegundo.
+        contenedor.setTaskExecutor(executor);
         contenedor.addMessageListener(receptor(salas), new ChannelTopic(CANAL));
         return contenedor;
+    }
+
+    @PreDestroy
+    void cerrar() {
+        executor.shutdown();
     }
 
     /**
