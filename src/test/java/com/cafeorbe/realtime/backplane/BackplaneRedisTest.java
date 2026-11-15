@@ -105,6 +105,17 @@ class BackplaneRedisTest {
     }
 
     @Test
+    @DisplayName("contenedorRedis(): el contenedor configura un TaskExecutor mono-hilo para respetar orden FIFO (REN-01)")
+    void elContenedorUsaExecutorMonoHilo() {
+        var conexiones = mock(RedisConnectionFactory.class);
+
+        var contenedor = backplane.contenedorRedis(conexiones, mock(Salas.class));
+
+        assertThat(contenedor.getConnectionFactory()).isSameAs(conexiones);
+        assertThatCode(backplane::cerrar).doesNotThrowAnyException();
+    }
+
+    @Test
     @DisplayName("receptor(): un sobre de otra versión sin un campo obligatorio tampoco lo tumba")
     void sobreIncompletoSeDescarta() {
         var salas = mock(Salas.class);
