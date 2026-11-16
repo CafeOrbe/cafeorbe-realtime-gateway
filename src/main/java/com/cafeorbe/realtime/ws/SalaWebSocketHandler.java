@@ -64,9 +64,11 @@ public class SalaWebSocketHandler extends TextWebSocketHandler {
     private final ObjectMapper json;
     private final MeterRegistry metricas;
     private final Timer reenvio;
+    private final CoordinadorDePujas coordinador;
 
     public SalaWebSocketHandler(Salas salas, Presencia presencia, AvisoDeConectados conectados,
-                                AuctionClient auction, ControlDeAbuso abuso, ObjectMapper json, MeterRegistry metricas) {
+                                AuctionClient auction, ControlDeAbuso abuso, ObjectMapper json, MeterRegistry metricas,
+                                CoordinadorDePujas coordinador) {
         this.salas = salas;
         this.presencia = presencia;
         this.conectados = conectados;
@@ -74,6 +76,7 @@ public class SalaWebSocketHandler extends TextWebSocketHandler {
         this.abuso = abuso;
         this.json = json;
         this.metricas = metricas;
+        this.coordinador = coordinador;
         // OBS-01 / REN-01: cuánto tarda auction en procesar una puja reenviada, con p95 y p99.
         this.reenvio = Timer.builder("cafeorbe.realtime.pujas.reenvio")
                 .serviceLevelObjectives(UMBRALES)
@@ -144,6 +147,35 @@ public class SalaWebSocketHandler extends TextWebSocketHandler {
             return;
         }
         long monto = entrada.get("monto").asLong();
+
+        // REN-01: Descarte temprano en el borde si el monto no cumple el incremento mínimo conocido
+        if (!coordinador.cumpleMinimo(subastaId, monto)) {
+            metricas.counter("cafeorbe.realtime.pujas.rechazadas_por_minimo").increment();
+            long siguiente = coordinador.siguienteMinimo(subastaId).orElse(monto);
+            responder(sesion, subastaId, "PUJA_RECHAZADA", Map.of(
+                    "subastaId", subastaId,
+                    "usuarioId", identidad.usuarioId(),
+                    "montoIntentado", monto,
+                    "motivo", "INCREMENTO_MINIMO",
+                    "mensaje", "El monto debe ser al menos " + siguiente
+            ));
+            return;
+        }
+
+        // REN-01: Coordinación de vuelo distribuida: solo un comprador por incremento viaja a auction-service
+        if (!coordinador.intentarAdquirirVuelo(subastaId, monto, identidad.usuarioId())) {
+            metricas.counter("cafeorbe.realtime.pujas.rechazadas_en_vuelo").increment();
+            long siguiente = coordinador.siguienteMinimo(subastaId).orElse(monto);
+            responder(sesion, subastaId, "PUJA_RECHAZADA", Map.of(
+                    "subastaId", subastaId,
+                    "usuarioId", identidad.usuarioId(),
+                    "montoIntentado", monto,
+                    "motivo", "INCREMENTO_MINIMO",
+                    "mensaje", "El monto debe ser al menos " + siguiente
+            ));
+            return;
+        }
+
         metricas.counter("cafeorbe.realtime.pujas.recibidas").increment();
         log.atInfo().addKeyValue("subastaId", subastaId).addKeyValue("usuario", identidad.usuarioId())
                 .addKeyValue("monto", monto).log("Puja recibida por WebSocket");
@@ -176,6 +208,7 @@ public class SalaWebSocketHandler extends TextWebSocketHandler {
 
     private void reenviar(WebSocketSession sesion, Identidad identidad, UUID subastaId, long monto, String correlacion) {
         if (abuso.estaBloqueado(identidad.usuarioId())) {
+            coordinador.liberarVuelo(subastaId, monto);
             return; // quedó bloqueado mientras esta puja esperaba turno: no llega a auction
         }
         try {
@@ -187,11 +220,21 @@ public class SalaWebSocketHandler extends TextWebSocketHandler {
                 muestra.stop(reenvio);
             }
             if (rechazo.isPresent()) {
-                responder(sesion, subastaId, "PUJA_RECHAZADA", rechazoDirecto(subastaId, identidad, rechazo.get()));
+                JsonNode cuerpo = rechazo.get();
+                if (cuerpo.has("siguienteMinimo") && !cuerpo.get("siguienteMinimo").isNull()) {
+                    coordinador.registrarMinimo(subastaId, cuerpo.get("siguienteMinimo").asLong());
+                }
+                String motivo = cuerpo.path("motivo").asText("");
+                if (!"INCREMENTO_MINIMO".equals(motivo)) {
+                    coordinador.liberarVuelo(subastaId, monto);
+                }
+                responder(sesion, subastaId, "PUJA_RECHAZADA", rechazoDirecto(subastaId, identidad, cuerpo));
             }
         } catch (AuctionClient.PujaNoEnviadaException e) {
+            coordinador.liberarVuelo(subastaId, monto);
             responder(sesion, subastaId, "ERROR", Map.of("mensaje", e.getMessage()));
         } catch (RuntimeException e) {
+            coordinador.liberarVuelo(subastaId, monto);
             // Sin esto la excepción quedaría en el CompletableFuture y quien pujó no sabría nada.
             log.warn("No se pudo reenviar la puja a auction: {}", e.getMessage());
             responder(sesion, subastaId, "ERROR", Map.of("mensaje", "No se pudo registrar la puja, intenta de nuevo"));
