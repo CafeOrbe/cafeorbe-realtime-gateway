@@ -52,7 +52,7 @@ public class BackplaneRedis implements Backplane {
         }
     }
 
-    private final ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
+    final ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
         var hilo = new Thread(r, "redis-backplane");
         hilo.setDaemon(true);
         return hilo;
