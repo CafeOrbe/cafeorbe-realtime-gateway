@@ -106,12 +106,14 @@ class BackplaneRedisTest {
 
     @Test
     @DisplayName("contenedorRedis(): el contenedor configura un TaskExecutor mono-hilo para respetar orden FIFO (REN-01)")
-    void elContenedorUsaExecutorMonoHilo() {
+    void elContenedorUsaExecutorMonoHilo() throws Exception {
         var conexiones = mock(RedisConnectionFactory.class);
 
         var contenedor = backplane.contenedorRedis(conexiones, mock(Salas.class));
 
         assertThat(contenedor.getConnectionFactory()).isSameAs(conexiones);
+        var futuro = backplane.executor.submit(() -> Thread.currentThread().getName());
+        assertThat(futuro.get()).isEqualTo("redis-backplane");
         assertThatCode(backplane::cerrar).doesNotThrowAnyException();
     }
 
