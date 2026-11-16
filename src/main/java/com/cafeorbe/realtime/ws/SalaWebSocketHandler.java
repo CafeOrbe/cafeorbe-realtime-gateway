@@ -88,8 +88,9 @@ public class SalaWebSocketHandler extends TextWebSocketHandler {
     public void afterConnectionEstablished(WebSocketSession sesion) {
         Identidad identidad = identidad(sesion);
         UUID subastaId = subasta(sesion);
-        // sendMessage no es seguro entre hilos: el decorador serializa los envíos y corta a los clientes lentos.
-        var segura = new ConcurrentWebSocketSessionDecorator(sesion, 5_000, 64 * 1024);
+        // sendMessage no es seguro entre hilos: el decorador serializa los envíos y tolera ráfagas sin cortar conexiones.
+        var segura = new ConcurrentWebSocketSessionDecorator(sesion, 15_000, 1024 * 1024,
+                ConcurrentWebSocketSessionDecorator.OverflowStrategy.DROP);
         sesion.getAttributes().put(ATRIBUTO_SESION_SEGURA, segura);
 
         salas.agregar(subastaId, new Salas.Conexion(segura, identidad));
