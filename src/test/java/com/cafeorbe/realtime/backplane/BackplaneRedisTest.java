@@ -105,6 +105,19 @@ class BackplaneRedisTest {
     }
 
     @Test
+    @DisplayName("contenedorRedis(): el contenedor configura un TaskExecutor mono-hilo para respetar orden FIFO (REN-01)")
+    void elContenedorUsaExecutorMonoHilo() throws Exception {
+        var conexiones = mock(RedisConnectionFactory.class);
+
+        var contenedor = backplane.contenedorRedis(conexiones, mock(Salas.class));
+
+        assertThat(contenedor.getConnectionFactory()).isSameAs(conexiones);
+        var futuro = backplane.executor.submit(() -> Thread.currentThread().getName());
+        assertThat(futuro.get()).isEqualTo("redis-backplane");
+        assertThatCode(backplane::cerrar).doesNotThrowAnyException();
+    }
+
+    @Test
     @DisplayName("receptor(): un sobre de otra versión sin un campo obligatorio tampoco lo tumba")
     void sobreIncompletoSeDescarta() {
         var salas = mock(Salas.class);
@@ -125,5 +138,32 @@ class BackplaneRedisTest {
                 .onMessage(mensaje(cuerpo), new byte[0])).doesNotThrowAnyException();
 
         verify(salas, never()).entregar(any());
+    }
+
+    @Test
+    @DisplayName("REN-01 · Por el ejecutor del contenedor, 500 mensajes de Redis llegan a las salas en el orden recibido, aunque algunos tarden más")
+    void ordenFifoPorElEjecutor() throws Exception {
+        var entregados = java.util.Collections.synchronizedList(new java.util.ArrayList<Integer>());
+        var salas = mock(Salas.class);
+        org.mockito.Mockito.doAnswer(i -> {
+            Sobre sobre = i.getArgument(0);
+            int n = sobre.datos().get("n").asInt();
+            if (n % 50 == 0) {
+                Thread.sleep(5); // uno lento no debe dejar que el siguiente se adelante
+            }
+            entregados.add(n);
+            return null;
+        }).when(salas).entregar(any());
+        var receptor = backplane.receptor(salas);
+
+        // Igual que el contenedor de Redis: cada mensaje recibido se entrega a través del ejecutor configurado.
+        for (int n = 0; n < 500; n++) {
+            String cuerpo = json.writeValueAsString(new Sobre(SALA, ANA, "puja-aceptada", json.valueToTree(Map.of("n", n))));
+            backplane.executor.execute(() -> receptor.onMessage(mensaje(cuerpo), new byte[0]));
+        }
+        backplane.executor.submit(() -> null).get(10, java.util.concurrent.TimeUnit.SECONDS);
+
+        assertThat(entregados).hasSize(500).isSorted();
+        backplane.cerrar();
     }
 }
