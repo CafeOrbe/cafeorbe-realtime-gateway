@@ -130,7 +130,10 @@ public class SalaWebSocketHandler extends TextWebSocketHandler {
             responder(sesion, subastaId, "ERROR", Map.of("mensaje", "No autorizado"));
             return;
         }
-        if (!entrada.path("monto").canConvertToLong()) {
+        // Los Orbes son enteros. canConvertToLong acepta 120.7 y asLong lo truncaría a 120 en silencio: se exige
+        // un número entero antes de convertir, para que nadie puje un monto distinto del que escribió.
+        JsonNode montoRecibido = entrada.path("monto");
+        if (!montoRecibido.isIntegralNumber() || !montoRecibido.canConvertToLong()) {
             responder(sesion, subastaId, "ERROR", Map.of("mensaje", "El monto de la puja no es válido"));
             return;
         }
@@ -147,7 +150,7 @@ public class SalaWebSocketHandler extends TextWebSocketHandler {
             }
             return;
         }
-        long monto = entrada.get("monto").asLong();
+        long monto = montoRecibido.longValue();
 
         // REN-01: Descarte temprano en el borde si el monto no cumple el incremento mínimo conocido
         if (!coordinador.cumpleMinimo(subastaId, monto)) {

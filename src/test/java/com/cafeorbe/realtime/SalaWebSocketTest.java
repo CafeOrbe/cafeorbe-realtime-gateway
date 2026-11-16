@@ -456,6 +456,110 @@ class SalaWebSocketTest {
     }
 
     @Test
+    @DisplayName("REN-01 · Un monto decimal (120.7, 120.0, 1e2) se rechaza antes de convertirlo: no se trunca ni llega a auction")
+    void montoDecimal() throws Exception {
+        UUID subasta = UUID.randomUUID();
+        Cliente ana = comoAna(subasta);
+        ana.siguiente("CONECTADOS");
+
+        for (String monto : new String[] {"120.7", "120.0", "1e2", "9223372036854775808"}) {
+            ana.enviar("{\"tipo\":\"PUJAR\",\"monto\":" + monto + "}");
+            assertThat(ana.siguiente("ERROR").get("datos").get("mensaje").asText())
+                    .isEqualTo("El monto de la puja no es válido");
+        }
+        Thread.sleep(300);
+        verify(auction, never()).pujar(eq(subasta), any(Identidad.class), any(Long.class), any());
+    }
+
+    @Test
+    @DisplayName("REN-01 · Una puja bajo el mínimo conocido se rechaza en el borde, sin llegar a auction")
+    void pujaBajoElMinimoSeRechazaEnElBorde() throws Exception {
+        UUID subasta = UUID.randomUUID();
+        Cliente ana = comoAna(subasta);
+        ana.siguiente("CONECTADOS");
+        evento(Eventos.PUJA_ACEPTADA, new PujaAceptada(subasta, UUID.randomUUID(), BRUNO, "Bruno", 500, 1, 510, Instant.now()));
+        ana.siguiente("PUJA_ACEPTADA");
+
+        ana.enviar("{\"tipo\":\"PUJAR\",\"monto\":505}");
+
+        JsonNode rechazo = ana.siguiente("PUJA_RECHAZADA");
+        assertThat(rechazo.at("/datos/motivo").asText()).isEqualTo("INCREMENTO_MINIMO");
+        assertThat(rechazo.at("/datos/mensaje").asText()).isEqualTo("El monto debe ser al menos 510");
+        Thread.sleep(300);
+        verify(auction, never()).pujar(eq(subasta), any(Identidad.class), any(Long.class), any());
+    }
+
+    @Test
+    @DisplayName("REN-01 · Concurrencia: dos compradores pujan el mismo monto a la vez y solo uno viaja a auction")
+    void mismoMontoConcurrenteSoloUnoViaja() throws Exception {
+        UUID subasta = UUID.randomUUID();
+        when(auction.pujar(eq(subasta), any(Identidad.class), eq(600L), any())).thenAnswer(i -> {
+            Thread.sleep(300);
+            return java.util.Optional.empty();
+        });
+        Cliente ana = comoAna(subasta);
+        Cliente bruno = comoBruno(subasta);
+        ana.siguiente("CONECTADOS");
+        bruno.siguiente("CONECTADOS");
+
+        var a = java.util.concurrent.CompletableFuture.runAsync(() -> ana.enviar("{\"tipo\":\"PUJAR\",\"monto\":600}"));
+        var b = java.util.concurrent.CompletableFuture.runAsync(() -> bruno.enviar("{\"tipo\":\"PUJAR\",\"monto\":600}"));
+        java.util.concurrent.CompletableFuture.allOf(a, b).get(3, TimeUnit.SECONDS);
+
+        Thread.sleep(800);
+        verify(auction, org.mockito.Mockito.times(1)).pujar(eq(subasta), any(Identidad.class), eq(600L), any());
+        long rechazadas = java.util.stream.Stream.of(ana, bruno).flatMap(c -> c.recibidos.stream())
+                .filter(m -> "PUJA_RECHAZADA".equals(m.path("tipo").asText())).count();
+        assertThat(rechazadas).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("REN-01 · Si auction rechaza por otro motivo se libera el monto; si es por incremento, se aprende el nuevo mínimo")
+    void rechazoDeAuctionLiberaOAprende() throws Exception {
+        UUID subasta = UUID.randomUUID();
+        when(auction.pujar(eq(subasta), any(Identidad.class), eq(700L), any())).thenReturn(java.util.Optional.of(
+                json.readTree("{\"aceptada\":false,\"monto\":700,\"motivo\":\"SALDO_INSUFICIENTE\",\"mensaje\":\"Sin saldo\"}")));
+        when(auction.pujar(eq(subasta), any(Identidad.class), eq(800L), any())).thenReturn(java.util.Optional.of(
+                json.readTree("{\"aceptada\":false,\"monto\":800,\"motivo\":\"INCREMENTO_MINIMO\",\"mensaje\":\"Muy bajo\",\"siguienteMinimo\":900}")));
+        Cliente ana = comoAna(subasta);
+        Cliente bruno = comoBruno(subasta);
+        ana.siguiente("CONECTADOS");
+
+        // Rechazo por saldo: el monto 700 queda libre y otro comprador puede intentarlo.
+        ana.enviar("{\"tipo\":\"PUJAR\",\"monto\":700}");
+        assertThat(ana.siguiente("PUJA_RECHAZADA").at("/datos/motivo").asText()).isEqualTo("SALDO_INSUFICIENTE");
+        bruno.enviar("{\"tipo\":\"PUJAR\",\"monto\":700}");
+        bruno.siguiente("PUJA_RECHAZADA");
+        verify(auction, timeout(3000).times(2)).pujar(eq(subasta), any(Identidad.class), eq(700L), any());
+
+        // Rechazo por incremento con siguienteMinimo: la siguiente puja bajo 900 se corta en el borde.
+        ana.enviar("{\"tipo\":\"PUJAR\",\"monto\":800}");
+        ana.siguiente("PUJA_RECHAZADA");
+        ana.enviar("{\"tipo\":\"PUJAR\",\"monto\":850}");
+        assertThat(ana.siguiente("PUJA_RECHAZADA").at("/datos/mensaje").asText()).isEqualTo("El monto debe ser al menos 900");
+        Thread.sleep(300);
+        verify(auction, never()).pujar(eq(subasta), any(Identidad.class), eq(850L), any());
+    }
+
+    @Test
+    @DisplayName("REN-01 · Orden y cero pérdidas: 200 pujas aceptadas despachadas seguidas llegan todas y en orden")
+    void eventosEnOrdenSinPerdidas() throws Exception {
+        UUID subasta = UUID.randomUUID();
+        Cliente ana = comoAna(subasta);
+        ana.siguiente("CONECTADOS");
+        for (int i = 1; i <= 200; i++) {
+            evento(Eventos.PUJA_ACEPTADA, new PujaAceptada(subasta, UUID.randomUUID(), BRUNO, "Bruno", 1000L + i, i,
+                    1001L + i, Instant.now()));
+        }
+        List<Long> cantidades = new ArrayList<>();
+        for (int i = 1; i <= 200; i++) {
+            cantidades.add(ana.siguiente("PUJA_ACEPTADA").at("/datos/cantidadPujas").asLong());
+        }
+        assertThat(cantidades).isSortedAccordingTo(Long::compare).hasSize(200).doesNotHaveDuplicates();
+        assertThat(cantidades.get(199)).isEqualTo(200L);
+    }
+
+    @Test
     @DisplayName("Una puja sin monto se rechaza: la validación de entrada es la misma")
     void pujaSinMonto() throws Exception {
         Cliente ana = comoAna(SUBASTA);
