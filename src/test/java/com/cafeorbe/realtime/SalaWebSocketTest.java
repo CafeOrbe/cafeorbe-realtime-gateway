@@ -456,6 +456,40 @@ class SalaWebSocketTest {
     }
 
     @Test
+    @DisplayName("REN-01 · Un monto decimal (120.7, 120.0, 1e2) se rechaza antes de convertirlo: no se trunca ni llega a auction")
+    void montoDecimal() throws Exception {
+        UUID subasta = UUID.randomUUID();
+        Cliente ana = comoAna(subasta);
+        ana.siguiente("CONECTADOS");
+
+        for (String monto : new String[] {"120.7", "120.0", "1e2", "9223372036854775808"}) {
+            ana.enviar("{\"tipo\":\"PUJAR\",\"monto\":" + monto + "}");
+            assertThat(ana.siguiente("ERROR").get("datos").get("mensaje").asText())
+                    .isEqualTo("El monto de la puja no es válido");
+        }
+        Thread.sleep(300);
+        verify(auction, never()).pujar(eq(subasta), any(Identidad.class), any(Long.class), any());
+    }
+
+    @Test
+    @DisplayName("REN-01 · Orden y cero pérdidas: 200 pujas aceptadas despachadas seguidas llegan todas y en orden")
+    void eventosEnOrdenSinPerdidas() throws Exception {
+        UUID subasta = UUID.randomUUID();
+        Cliente ana = comoAna(subasta);
+        ana.siguiente("CONECTADOS");
+        for (int i = 1; i <= 200; i++) {
+            evento(Eventos.PUJA_ACEPTADA, new PujaAceptada(subasta, UUID.randomUUID(), BRUNO, "Bruno", 1000L + i, i,
+                    1001L + i, Instant.now()));
+        }
+        List<Long> cantidades = new ArrayList<>();
+        for (int i = 1; i <= 200; i++) {
+            cantidades.add(ana.siguiente("PUJA_ACEPTADA").at("/datos/cantidadPujas").asLong());
+        }
+        assertThat(cantidades).isSortedAccordingTo(Long::compare).hasSize(200).doesNotHaveDuplicates();
+        assertThat(cantidades.get(199)).isEqualTo(200L);
+    }
+
+    @Test
     @DisplayName("Una puja sin monto se rechaza: la validación de entrada es la misma")
     void pujaSinMonto() throws Exception {
         Cliente ana = comoAna(SUBASTA);

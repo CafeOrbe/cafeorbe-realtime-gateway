@@ -139,4 +139,31 @@ class BackplaneRedisTest {
 
         verify(salas, never()).entregar(any());
     }
+
+    @Test
+    @DisplayName("REN-01 · Por el ejecutor del contenedor, 500 mensajes de Redis llegan a las salas en el orden recibido, aunque algunos tarden más")
+    void ordenFifoPorElEjecutor() throws Exception {
+        var entregados = java.util.Collections.synchronizedList(new java.util.ArrayList<Integer>());
+        var salas = mock(Salas.class);
+        org.mockito.Mockito.doAnswer(i -> {
+            Sobre sobre = i.getArgument(0);
+            int n = sobre.datos().get("n").asInt();
+            if (n % 50 == 0) {
+                Thread.sleep(5); // uno lento no debe dejar que el siguiente se adelante
+            }
+            entregados.add(n);
+            return null;
+        }).when(salas).entregar(any());
+        var receptor = backplane.receptor(salas);
+
+        // Igual que el contenedor de Redis: cada mensaje recibido se entrega a través del ejecutor configurado.
+        for (int n = 0; n < 500; n++) {
+            String cuerpo = json.writeValueAsString(new Sobre(SALA, ANA, "puja-aceptada", json.valueToTree(Map.of("n", n))));
+            backplane.executor.execute(() -> receptor.onMessage(mensaje(cuerpo), new byte[0]));
+        }
+        backplane.executor.submit(() -> null).get(10, java.util.concurrent.TimeUnit.SECONDS);
+
+        assertThat(entregados).hasSize(500).isSorted();
+        backplane.cerrar();
+    }
 }
