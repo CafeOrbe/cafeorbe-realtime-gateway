@@ -8,13 +8,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 
 import java.net.URLEncoder;
+import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Map;
@@ -54,9 +55,11 @@ public class AuctionClient {
                          @Value("${cafeorbe.auction.read-timeout-ms}") int lecturaMs,
                          @Value("${cafeorbe.seguridad.credencial-interna}") String credencial,
                          ObjectMapper json) {
-        var fabrica = new SimpleClientHttpRequestFactory();
-        fabrica.setConnectTimeout(conexionMs);
-        fabrica.setReadTimeout(lecturaMs);
+        var httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofMillis(conexionMs))
+                .build();
+        var fabrica = new JdkClientHttpRequestFactory(httpClient);
+        fabrica.setReadTimeout(Duration.ofMillis(lecturaMs));
         this.cliente = RestClient.builder().baseUrl(url).requestFactory(fabrica)
                 .defaultHeader(CABECERA_CREDENCIAL, credencial).build();
         this.json = json;
