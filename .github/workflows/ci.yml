@@ -130,13 +130,15 @@ jobs:
             exit 1
           fi
 
-          # DIS-01: dos réplicas comparten presencia y difusión mediante Redis; puede crecer hasta cuatro.
+          # DIS-01: cuatro réplicas base comparten presencia y difusión mediante Redis; puede crecer hasta seis.
           az containerapp update \
             --name "$APP_NAME" \
             --resource-group "$RESOURCE_GROUP" \
             --image "$IMAGE" \
-            --min-replicas 2 \
-            --max-replicas 4 \
+            --cpu 0.5 \
+            --memory 1Gi \
+            --min-replicas 4 \
+            --max-replicas 6 \
             --set-env-vars \
               "JWT_SECRET=$JWT_SECRET" \
               "INTERNAL_TOKEN=$INTERNAL_TOKEN" \
@@ -225,13 +227,15 @@ jobs:
             exit 1
           fi
 
-          # DIS-01: dos réplicas comparten presencia y difusión mediante Redis; puede crecer hasta cuatro.
+          # DIS-01: cuatro réplicas base comparten presencia y difusión mediante Redis; puede crecer hasta seis.
           az containerapp update \
             --name "$APP_NAME" \
             --resource-group "$RESOURCE_GROUP" \
             --image "$IMAGE" \
-            --min-replicas 2 \
-            --max-replicas 4 \
+            --cpu 0.5 \
+            --memory 1Gi \
+            --min-replicas 4 \
+            --max-replicas 6 \
             --set-env-vars \
               "JWT_SECRET=$JWT_SECRET" \
               "INTERNAL_TOKEN=$INTERNAL_TOKEN" \
